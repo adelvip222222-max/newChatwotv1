@@ -1,0 +1,653 @@
+import crypto from "crypto";
+import ExcelJS from "exceljs";
+import mammoth from "mammoth";
+import OpenAI from "openai";
+import { Types } from "mongoose";
+import {
+  Bot,
+  AiSetting,
+  KnowledgeCategory,
+  KnowledgeChunk,
+  KnowledgeCollection,
+  KnowledgeDocument,
+  AiModel
+} from "@/lib/models";
+import { connectToDatabase } from "@/lib/mongodb";
+import { decryptSecret } from "@/lib/crypto";
+
+export const knowledgeSourceTypes = [
+  "pdf",
+  "docx",
+  "txt",
+  "csv",
+  "excel",
+  "faq",
+  "website",
+  "html",
+  "product_catalog",
+  "services_catalog",
+  "policies",
+  "terms",
+  "pricing",
+  "manual",
+  "support_article",
+  "custom_text"
+] as const;
+
+export type KnowledgeSourceType = (typeof knowledgeSourceTypes)[number];
+
+type CreateKnowledgeInput = {
+  tenantId: string;
+  botId: string;
+  title: string;
+  sourceType: KnowledgeSourceType;
+  categoryName: string;
+  collectionName: string;
+  tags: string[];
+  isTemporary?: boolean;
+  expiresAt?: Date;
+  text?: string;
+  sourceUrl?: string;
+  file?: {
+    name: string;
+    type: string;
+    size: number;
+    buffer: Buffer;
+  };
+};
+
+type KnowledgeSearchResult = {
+  text: string;
+  score: number;
+  semanticScore: number;
+  keywordScore: number;
+  sourceTitle: string;
+  sourceUrl: string;
+  tags: string[];
+  documentId: string;
+};
+
+const embeddingDimensions = 128;
+const defaultCategories = [
+  "المنتجات",
+  "الخدمات",
+  "الأسعار",
+  "الشحن",
+  "الاسترجاع",
+  "الضمان",
+  "الدعم الفني",
+  "الأسئلة الشائعة"
+];
+
+export async function ensureDefaultKnowledgeTaxonomy(tenantId: string) {
+  await connectToDatabase();
+  for (const [index, name] of defaultCategories.entries()) {
+    const category = await KnowledgeCategory.findOneAndUpdate(
+      { tenantId, name },
+      {
+        $setOnInsert: {
+          tenantId,
+          name,
+          sortOrder: index + 1,
+          isActive: true
+        }
+      },
+      { new: true, upsert: true }
+    );
+
+    await KnowledgeCollection.findOneAndUpdate(
+      { tenantId, categoryId: category._id, name: "عام" },
+      {
+        $setOnInsert: {
+          tenantId,
+          categoryId: category._id,
+          name: "عام",
+          sortOrder: 1,
+          isActive: true
+        }
+      },
+      { new: true, upsert: true }
+    );
+  }
+}
+
+export async function getKnowledgeDashboardData(tenantId: string) {
+  await ensureDefaultKnowledgeTaxonomy(tenantId);
+  const [bots, categories, collections, documents, aiSettings] = await Promise.all([
+    Bot.find({ tenantId }).sort({ createdAt: -1 }).lean(),
+    KnowledgeCategory.find({ tenantId, isActive: true }).sort({ sortOrder: 1, name: 1 }).lean(),
+    KnowledgeCollection.find({ tenantId, isActive: true }).sort({ sortOrder: 1, name: 1 }).lean(),
+    KnowledgeDocument.find({ tenantId }).sort({ updatedAt: -1 }).limit(80).lean(),
+    AiSetting.find({ tenantId }).lean()
+  ]);
+  const settingsByBot = new Map(aiSettings.map((setting) => [setting.botId.toString(), setting]));
+
+  return {
+    bots: bots.map((bot) => ({
+      id: bot._id.toString(),
+      name: bot.name,
+      knowledgeEnabled: bot.knowledgeEnabled ?? true,
+      showKnowledgeSources: bot.showKnowledgeSources ?? false,
+      confidenceDirectThreshold: bot.confidenceDirectThreshold ?? 70,
+      confidenceReviewThreshold: bot.confidenceReviewThreshold ?? 40,
+      systemPrompt: settingsByBot.get(bot._id.toString())?.systemPrompt || "",
+      autoFollowupEnabled: bot.autoFollowupEnabled ?? false,
+      followupDelayMinutes: bot.followupDelayMinutes ?? 60,
+      followupMaxAttempts: bot.followupMaxAttempts ?? 1,
+      autoCloseEnabled: bot.autoCloseEnabled ?? false,
+      autoCloseAfterMinutes: bot.autoCloseAfterMinutes ?? 1440,
+      autoCloseMessage: bot.autoCloseMessage || ""
+    })),
+    categories: categories.map((category) => ({
+      id: category._id.toString(),
+      name: category.name,
+      description: category.description || ""
+    })),
+    collections: collections.map((collection) => ({
+      id: collection._id.toString(),
+      categoryId: collection.categoryId.toString(),
+      name: collection.name
+    })),
+    documents: documents.map((document) => ({
+      id: document._id.toString(),
+      title: document.title,
+      sourceType: document.sourceType,
+      status: document.status,
+      statusReason: document.statusReason || "",
+      tags: document.tags || [],
+      isTemporary: document.isTemporary || false,
+      expiresAt: document.expiresAt?.toISOString() || "",
+      chunkCount: document.chunkCount || 0,
+      embeddingCount: document.embeddingCount || 0,
+      needsRetraining: document.needsRetraining || false,
+      updatedAt: document.updatedAt?.toISOString() || ""
+    }))
+  };
+}
+
+export async function getKnowledgeHealth(tenantId: string) {
+  await connectToDatabase();
+  const [documents, chunks, embeddings, duplicates, unprocessed, retraining, pages] = await Promise.all([
+    KnowledgeDocument.countDocuments({ tenantId }),
+    KnowledgeChunk.countDocuments({ tenantId }),
+    KnowledgeChunk.countDocuments({ tenantId, "embedding.0": { $exists: true } }),
+    KnowledgeDocument.countDocuments({ tenantId, status: "duplicate" }),
+    KnowledgeDocument.countDocuments({ tenantId, status: { $in: ["pending", "processing", "error"] } }),
+    KnowledgeDocument.countDocuments({ tenantId, needsRetraining: true }),
+    KnowledgeDocument.aggregate<{ total: number }>([
+      { $match: { tenantId: new Types.ObjectId(tenantId) } },
+      { $group: { _id: null, total: { $sum: "$pageCount" } } }
+    ])
+  ]);
+
+  return {
+    documents,
+    pages: pages[0]?.total || 0,
+    chunks,
+    embeddings,
+    duplicates,
+    unprocessed,
+    retraining
+  };
+}
+
+export async function createKnowledgeDocument(input: CreateKnowledgeInput) {
+  await connectToDatabase();
+  if (!Types.ObjectId.isValid(input.tenantId) || !Types.ObjectId.isValid(input.botId)) {
+    throw new Error("معرف المستأجر أو البوت غير صالح.");
+  }
+
+  const [bot, category] = await Promise.all([
+    Bot.findOne({ _id: input.botId, tenantId: input.tenantId }),
+    upsertCategory(input.tenantId, input.categoryName)
+  ]);
+  if (!bot) throw new Error("البوت غير موجود داخل هذا الحساب.");
+
+  const collection = await upsertCollection(input.tenantId, category._id, input.collectionName);
+  const extracted = await extractKnowledgeText(input);
+  const cleaned = cleanText(extracted.text);
+  if (cleaned.length < 10) throw new Error("المحتوى قصير جدًا أو لا يحتوي على نص قابل للقراءة.");
+
+  const textHash = hash(cleaned);
+  const duplicate = await KnowledgeDocument.findOne({
+    tenantId: input.tenantId,
+    botId: input.botId,
+    textHash,
+    status: { $ne: "error" }
+  });
+
+  const document = await KnowledgeDocument.create({
+    tenantId: input.tenantId,
+    botId: input.botId,
+    categoryId: category._id,
+    collectionId: collection._id,
+    title: input.title.trim(),
+    sourceType: input.sourceType,
+    sourceUrl: input.sourceUrl?.trim() || "",
+    fileName: input.file?.name || "",
+    mimeType: input.file?.type || "",
+    sizeBytes: input.file?.size || Buffer.byteLength(cleaned),
+    tags: normalizeTags(input.tags),
+    isTemporary: input.isTemporary ?? false,
+    expiresAt: input.expiresAt,
+    status: duplicate ? "duplicate" : "processing",
+    statusReason: duplicate ? "هذا المحتوى مكرر بالفعل." : "",
+    duplicateOf: duplicate?._id,
+    rawText: cleaned,
+    textHash,
+    pageCount: extracted.pageCount,
+    metadata: {
+      sourceUrl: input.sourceUrl || "",
+      originalLength: extracted.text.length,
+      cleanedLength: cleaned.length
+    },
+    needsRetraining: false
+  });
+
+  if (!duplicate) {
+    await trainKnowledgeDocument(document._id.toString(), input.tenantId);
+  }
+
+  return document._id.toString();
+}
+
+export async function trainKnowledgeDocument(documentId: string, tenantId: string) {
+  await connectToDatabase();
+  const document = await KnowledgeDocument.findOne({ _id: documentId, tenantId });
+  if (!document) throw new Error("مصدر المعرفة غير موجود.");
+
+  document.status = "processing";
+  document.statusReason = "";
+  await document.save();
+
+  try {
+    await KnowledgeChunk.deleteMany({ tenantId, documentId: document._id });
+    const chunks = splitIntoChunks(document.rawText || "");
+    const records = [];
+
+    // Resolve the active OpenAI model for the tenant or the system default
+    let aiModel = await AiModel.findOne({
+      tenantId: tenantId,
+      provider: "openai",
+      isActive: true,
+    });
+    if (!aiModel) {
+      aiModel = await AiModel.findOne({
+        provider: "openai",
+        isActive: true,
+      });
+    }
+
+    const apiKey = aiModel ? decryptSecret(aiModel.apiKeyEncrypted) : "";
+
+    for (let index = 0; index < chunks.length; index += 1) {
+      const text = chunks[index];
+      const normalizedText = normalizeForSearch(text);
+      const { embedding, provider } = await createEmbedding(text, apiKey);
+      records.push({
+        tenantId,
+        botId: document.botId,
+        documentId: document._id,
+        categoryId: document.categoryId,
+        collectionId: document.collectionId,
+        chunkIndex: index,
+        text,
+        normalizedText,
+        keywords: extractKeywords(text),
+        embedding,
+        embeddingProvider: provider,
+        isTemporary: document.isTemporary || false,
+        expiresAt: document.expiresAt,
+        tokenEstimate: estimateTokens(text),
+        sourceTitle: document.title,
+        sourceUrl: document.sourceUrl || "",
+        contentHash: hash(text),
+        metadata: {
+          sourceType: document.sourceType,
+          tags: Array.isArray(document.tags) ? [...document.tags] : []
+        }
+      });
+    }
+
+    if (records.length) await KnowledgeChunk.insertMany(records);
+
+    document.status = "ready";
+    document.statusReason = "";
+    document.chunkCount = records.length;
+    document.embeddingCount = records.filter((item) => item.embedding.length > 0).length;
+    document.lastTrainedAt = new Date();
+    document.needsRetraining = false;
+    await document.save();
+  } catch (error) {
+    document.status = "error";
+    document.statusReason = error instanceof Error ? error.message : "فشل تدريب مصدر المعرفة.";
+    document.needsRetraining = true;
+    await document.save();
+    throw error;
+  }
+}
+
+export async function retrainAllKnowledge(tenantId: string, botId?: string) {
+  await connectToDatabase();
+  const filter: Record<string, unknown> = { tenantId, status: { $ne: "duplicate" } };
+  if (botId) filter.botId = botId;
+  const documents = await KnowledgeDocument.find(filter).select("_id").lean();
+  for (const document of documents) {
+    await trainKnowledgeDocument(document._id.toString(), tenantId);
+  }
+  return documents.length;
+}
+
+export async function searchKnowledge(input: {
+  tenantId: string;
+  botId: string;
+  question: string;
+  limit?: number;
+}) {
+  await connectToDatabase();
+  const question = cleanText(input.question);
+  const queryEmbedding = (await createEmbedding(question)).embedding;
+  const queryKeywords = extractKeywords(question);
+
+  const semanticCandidates = await KnowledgeChunk.find({
+    tenantId: input.tenantId,
+    botId: input.botId,
+    $or: [{ expiresAt: { $exists: false } }, { expiresAt: null }, { expiresAt: { $gt: new Date() } }]
+  })
+    .sort({ updatedAt: -1 })
+    .limit(250)
+    .lean();
+
+  const keywordCandidates = queryKeywords.length
+    ? await KnowledgeChunk.find(
+        {
+          tenantId: input.tenantId,
+          botId: input.botId,
+          $or: [{ expiresAt: { $exists: false } }, { expiresAt: null }, { expiresAt: { $gt: new Date() } }],
+          $text: { $search: queryKeywords.join(" ") }
+        },
+        { score: { $meta: "textScore" } }
+      )
+        .sort({ score: { $meta: "textScore" } })
+        .limit(80)
+        .lean()
+        .catch(() => [])
+    : [];
+
+  const candidates = new Map<string, (typeof semanticCandidates)[number]>();
+  for (const item of [...semanticCandidates, ...keywordCandidates]) candidates.set(item._id.toString(), item);
+
+  const scored = [...candidates.values()]
+    .map((item) => {
+      const semanticScore = cosineSimilarity(queryEmbedding, item.embedding || []);
+      const keywordScore = keywordOverlap(queryKeywords, item.keywords || [], item.normalizedText || "");
+      const score = Math.round((semanticScore * 0.68 + keywordScore * 0.32) * 100);
+      return {
+        text: item.text,
+        score,
+        semanticScore: Math.round(semanticScore * 100),
+        keywordScore: Math.round(keywordScore * 100),
+        sourceTitle: item.sourceTitle || "Knowledge Base",
+        sourceUrl: item.sourceUrl || "",
+        tags: Array.isArray(item.metadata?.tags) ? item.metadata.tags : [],
+        documentId: item.documentId.toString()
+      };
+    })
+    .sort((a, b) => b.score - a.score);
+
+  const top10 = scored.slice(0, input.limit || 10);
+  const confidence = calculateConfidence(top10, queryKeywords);
+  return {
+    intent: inferIntent(question),
+    keywords: queryKeywords,
+    confidence,
+    results: top10
+  };
+}
+
+export function buildKnowledgePrompt(input: {
+  question: string;
+  intent: string;
+  keywords: string[];
+  confidence: number;
+  results: KnowledgeSearchResult[];
+  showSources: boolean;
+}) {
+  if (!input.results.length) {
+    return [
+      "لم يتم العثور على مصادر كافية في قاعدة المعرفة.",
+      "اطرح سؤالًا توضيحيًا محددًا بدل قول لا أعرف.",
+      `السؤال: ${input.question}`
+    ].join("\n");
+  }
+
+  const sources = input.results.slice(0, 6).map((result, index) => {
+    const source = input.showSources
+      ? `\nالمصدر: ${result.sourceTitle}${result.sourceUrl ? ` - ${result.sourceUrl}` : ""}`
+      : "";
+    return `#${index + 1} score=${result.score}${source}\n${result.text}`;
+  });
+
+  return [
+    "قاعدة المعرفة هي مصدر الحقيقة الأول. استخدم المقاطع التالية قبل أي معرفة عامة.",
+    "امنع الردود الضعيفة مثل: لا أعرف، لا أملك معلومات، سأحولك للدعم، إلا بعد محاولات بحث وتوضيح.",
+    "إذا كانت الثقة أعلى من 70 أجب مباشرة. بين 40 و70 أجب مع تنبيه لطيف أن المعلومة قد تحتاج مراجعة. أقل من 40 اسأل سؤالًا توضيحيًا محددًا.",
+    "لا تحول المحادثة إلى موظف إلا إذا طلب المستخدم ذلك صراحة أو كانت عملية مالية/إدارية تحتاج صلاحية بشرية.",
+    `Intent: ${input.intent}`,
+    `Keywords: ${input.keywords.join(", ") || "-"}`,
+    `Confidence: ${input.confidence}/100`,
+    "المصادر المسترجعة:",
+    sources.join("\n\n"),
+    `سؤال المستخدم: ${input.question}`
+  ].join("\n");
+}
+
+async function upsertCategory(tenantId: string, name: string) {
+  const safeName = name.trim() || "الأسئلة الشائعة";
+  return KnowledgeCategory.findOneAndUpdate(
+    { tenantId, name: safeName },
+    { $setOnInsert: { tenantId, name: safeName, isActive: true } },
+    { new: true, upsert: true }
+  );
+}
+
+async function upsertCollection(tenantId: string, categoryId: Types.ObjectId, name: string) {
+  const safeName = name.trim() || "عام";
+  return KnowledgeCollection.findOneAndUpdate(
+    { tenantId, categoryId, name: safeName },
+    { $setOnInsert: { tenantId, categoryId, name: safeName, isActive: true } },
+    { new: true, upsert: true }
+  );
+}
+
+async function extractKnowledgeText(input: CreateKnowledgeInput) {
+  if (input.sourceUrl && (input.sourceType === "website" || input.sourceType === "html")) {
+    const response = await fetch(input.sourceUrl, { redirect: "follow" });
+    if (!response.ok) throw new Error("تعذر تحميل رابط المعرفة.");
+    const html = await response.text();
+    return { text: stripHtml(html), pageCount: 1 };
+  }
+
+  if (!input.file) {
+    return { text: stripHtml(input.text || ""), pageCount: 1 };
+  }
+
+  if (input.sourceType === "pdf") {
+    const { PDFParse } = await import("pdf-parse");
+    const parser = new PDFParse({ data: input.file.buffer });
+    try {
+      const result = await parser.getText();
+      return { text: result.text || "", pageCount: result.pages?.length || 1 };
+    } finally {
+      await parser.destroy();
+    }
+  }
+
+  if (input.sourceType === "docx") {
+    const result = await mammoth.extractRawText({ buffer: input.file.buffer });
+    return { text: result.value || "", pageCount: 1 };
+  }
+
+  if (input.sourceType === "excel") {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(input.file.buffer as unknown as ArrayBuffer);
+    const rows: string[] = [];
+    workbook.eachSheet((sheet) => {
+      rows.push(`Sheet: ${sheet.name}`);
+      sheet.eachRow((row) => {
+        const values = row.values as unknown[];
+        rows.push(values.filter(Boolean).join(" | "));
+      });
+    });
+    return { text: rows.join("\n"), pageCount: workbook.worksheets.length || 1 };
+  }
+
+  return { text: input.file.buffer.toString("utf8"), pageCount: 1 };
+}
+
+function cleanText(value: string) {
+  const lines = value
+    .replace(/\u0000/g, " ")
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  return [...new Set(lines)].join("\n").trim();
+}
+
+function stripHtml(value: string) {
+  return value
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+}
+
+function splitIntoChunks(text: string) {
+  const words = text.split(/\s+/).filter(Boolean);
+  const chunks: string[] = [];
+  const chunkSize = 420;
+  const overlap = 70;
+  for (let start = 0; start < words.length; start += chunkSize - overlap) {
+    const chunk = words.slice(start, start + chunkSize).join(" ").trim();
+    if (chunk.length > 80) chunks.push(chunk);
+  }
+  return chunks.length ? chunks : [text];
+}
+
+async function createEmbedding(text: string, apiKey?: string): Promise<{ embedding: number[]; provider: string }> {
+  const finalApiKey = apiKey || process.env.OPENAI_API_KEY;
+  if (finalApiKey) {
+    const client = new OpenAI({ apiKey: finalApiKey });
+    const response = await client.embeddings.create({
+      model: process.env.OPENAI_EMBEDDING_MODEL || "text-embedding-3-small",
+      input: text.slice(0, 8000)
+    });
+    return { embedding: response.data[0]?.embedding || [], provider: "openai" };
+  }
+  return { embedding: localHashEmbedding(text), provider: "local-hash" };
+}
+
+function localHashEmbedding(text: string) {
+  const vector = Array.from({ length: embeddingDimensions }, () => 0);
+  for (const token of extractKeywords(text, 200)) {
+    const digest = crypto.createHash("sha256").update(token).digest();
+    const index = digest[0] % embeddingDimensions;
+    vector[index] += 1;
+  }
+  const length = Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0)) || 1;
+  return vector.map((value) => Number((value / length).toFixed(6)));
+}
+
+function cosineSimilarity(a: number[], b: number[]) {
+  if (!a.length || !b.length) return 0;
+  const max = Math.min(a.length, b.length);
+  let dot = 0;
+  let aLength = 0;
+  let bLength = 0;
+  for (let index = 0; index < max; index += 1) {
+    dot += a[index] * b[index];
+    aLength += a[index] * a[index];
+    bLength += b[index] * b[index];
+  }
+  return dot / ((Math.sqrt(aLength) || 1) * (Math.sqrt(bLength) || 1));
+}
+
+function keywordOverlap(queryKeywords: string[], chunkKeywords: string[], normalizedText: string) {
+  if (!queryKeywords.length) return 0;
+  const chunkSet = new Set(chunkKeywords);
+  const matches = queryKeywords.filter((keyword) => chunkSet.has(keyword) || normalizedText.includes(keyword));
+  return Math.min(1, matches.length / Math.max(2, queryKeywords.length));
+}
+
+function calculateConfidence(results: KnowledgeSearchResult[], keywords: string[]) {
+  if (!results.length) return 0;
+  const best = results[0].score;
+  const second = results[1]?.score || 0;
+  const coverage = Math.min(20, keywords.length * 3);
+  const spread = Math.max(0, best - second);
+  return Math.max(0, Math.min(100, Math.round(best * 0.78 + coverage + spread * 0.12)));
+}
+
+function normalizeForSearch(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractKeywords(value: string, limit = 32) {
+  const stopWords = new Set([
+    "من",
+    "في",
+    "على",
+    "عن",
+    "الى",
+    "إلى",
+    "ما",
+    "هل",
+    "هو",
+    "هي",
+    "the",
+    "and",
+    "for",
+    "with",
+    "you",
+    "are",
+    "what",
+    "how",
+    "is"
+  ]);
+  const tokens = normalizeForSearch(value)
+    .split(" ")
+    .filter((token) => token.length > 2 && !stopWords.has(token));
+  return [...new Set(tokens)].slice(0, limit);
+}
+
+function inferIntent(question: string) {
+  const normalized = normalizeForSearch(question);
+  if (/سعر|اسعار|pricing|price|plan|خطة/.test(normalized)) return "pricing";
+  if (/شحن|توصيل|shipping|delivery/.test(normalized)) return "shipping";
+  if (/استرجاع|استبدال|refund|return/.test(normalized)) return "returns";
+  if (/ضمان|warranty/.test(normalized)) return "warranty";
+  if (/منتج|product/.test(normalized)) return "product";
+  if (/خدمة|service/.test(normalized)) return "service";
+  if (/دعم|support|مشكلة/.test(normalized)) return "support";
+  return "general_question";
+}
+
+function estimateTokens(text: string) {
+  return Math.ceil(text.split(/\s+/).filter(Boolean).length * 1.35);
+}
+
+function hash(value: string) {
+  return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+function normalizeTags(tags: string[]) {
+  return [...new Set(tags.map((tag) => tag.trim()).filter(Boolean))].slice(0, 20);
+}

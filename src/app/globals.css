@@ -1,0 +1,274 @@
+/*
+ * globals.css
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Architecture: This file is the CSS layer of the theme system.
+ * 
+ * Layers (in order):
+ *   1. Tailwind base/components/utilities    → framework reset + utilities
+ *   2. :root CSS custom properties           → generated from tokens.ts
+ *   3. Global element styles                 → typography, direction
+ *   4. Component layer (@layer components)   → reusable utility classes
+ *      (field, label, btn-primary, btn-secondary, panel, badge-*)
+ *
+ * Rule: All values reference CSS variables (var(--*)) or Tailwind utilities.
+ *       No raw hex values. No hardcoded pixel values outside spacing scale.
+ *
+ * Google Fonts: Tajawal (Arabic) + Inter (Latin) loaded here.
+ * Both fonts share similar x-height, ensuring harmonious bilingual rendering.
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── 1. Design Token CSS Custom Properties ─────────────────────────────────── */
+:root {
+  color-scheme: light;
+
+  /* Colors */
+  --color-primary-50:  #faf5ff;
+  --color-primary-100: #f3e8ff;
+  --color-primary-200: #e9d5ff;
+  --color-primary-300: #d8b4fe;
+  --color-primary-400: #c084fc;
+  --color-primary-500: #9b59d0;
+  --color-primary-600: #843db0;
+  --color-primary-700: #6c2e93;
+  --color-primary-800: #562276;
+  --color-primary-900: #44185c;
+
+  --color-accent:  var(--color-primary-600);
+  --color-ink:     #17202a;
+  --color-paper:   #f8fafc;
+
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --color-error:   #ef4444;
+  --color-info:    #3b82f6;
+
+  /* Typography */
+  --font-sans: "Tajawal", "Inter", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", "Courier New", monospace;
+
+  /* Shadows */
+  --shadow-sm:    0 1px 3px rgba(15, 23, 42, 0.07);
+  --shadow-soft:  0 14px 38px rgba(23, 32, 42, 0.08);
+  --shadow-md:    0 4px 16px rgba(15, 23, 42, 0.10);
+  --shadow-lg:    0 12px 40px rgba(15, 23, 42, 0.14);
+  --shadow-focus: 0 0 0 3px rgba(132, 61, 176, 0.25);
+
+  /* Radius */
+  --radius-sm:   0.25rem;
+  --radius-md:   0.5rem;
+  --radius-lg:   0.75rem;
+  --radius-xl:   1rem;
+  --radius-full: 9999px;
+
+  /* Motion */
+  --duration-fast:   100ms;
+  --duration-normal: 200ms;
+  --duration-slow:   350ms;
+
+  /* Layout */
+  --sidebar-width:          16rem;   /* 256px */
+  --sidebar-width-collapsed: 5rem;   /* 80px  */
+  --header-height:           4rem;   /* 64px  */
+}
+
+/* ── 2. Dark mode scaffold (Phase 3 — opt-in via class="dark") ─────────────── */
+.dark {
+  color-scheme: dark;
+  --color-ink:   #f8fafc;
+  --color-paper: #090d16; /* Premium dark background */
+  --color-accent: var(--color-primary-400); /* Glowy purple */
+}
+
+/* ── 3. Global Base Styles ─────────────────────────────────────────────────── */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  /* Smooth color/background transitions for theme switches */
+  transition-property: color, background-color, border-color, text-decoration-color, fill, stroke;
+  transition-duration: var(--duration-fast);
+}
+
+html {
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  line-height: 1.6;
+  letter-spacing: 0;
+}
+
+/* Inherit font to all interactive elements */
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+/* Remove default margins from headings */
+h1, h2, h3, h4, h5, h6 {
+  margin: 0;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+/* ── 4. Component Layer ─────────────────────────────────────────────────────── */
+@layer components {
+
+  /* ─ Form Elements ─────────────────────────────────────────────────────────── */
+  .field {
+    @apply w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-100;
+    transition-duration: var(--duration-normal);
+  }
+  .field:focus {
+    border-color: var(--color-accent);
+    box-shadow: var(--shadow-focus);
+  }
+  .field::placeholder {
+    @apply text-slate-400 dark:text-slate-500;
+  }
+  .field:disabled {
+    @apply cursor-not-allowed bg-slate-50 text-slate-400 dark:bg-slate-950 dark:text-slate-600;
+  }
+
+  .label {
+    @apply mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300;
+  }
+
+  /* ─ Buttons ───────────────────────────────────────────────────────────────── */
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-semibold text-white transition;
+    background-color: var(--color-accent);
+    transition-duration: var(--duration-normal);
+  }
+  .btn-primary:hover:not(:disabled) {
+    filter: brightness(0.92);
+  }
+  .btn-primary:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+  .btn-primary:disabled {
+    @apply cursor-not-allowed bg-slate-300 text-slate-500 dark:bg-slate-800 dark:text-slate-600;
+  }
+  .btn-primary:active:not(:disabled) {
+    transform: scale(0.98);
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800/80;
+    transition-duration: var(--duration-normal);
+  }
+  .btn-secondary:hover:not(:disabled) {
+    @apply border-slate-300 bg-slate-50 dark:border-slate-700 dark:bg-slate-800;
+  }
+  .btn-secondary:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+  .btn-secondary:disabled {
+    @apply cursor-not-allowed opacity-50;
+  }
+  .btn-secondary:active:not(:disabled) {
+    transform: scale(0.98);
+  }
+
+  .btn-danger {
+    @apply inline-flex items-center justify-center gap-2 rounded-md bg-red-600 px-4 py-2 text-sm font-semibold text-white transition;
+    transition-duration: var(--duration-normal);
+  }
+  .btn-danger:hover:not(:disabled) {
+    @apply bg-red-700;
+  }
+  .btn-danger:disabled {
+    @apply cursor-not-allowed opacity-50;
+  }
+
+  /* ─ Layout ────────────────────────────────────────────────────────────────── */
+  .panel {
+    @apply rounded-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/40;
+    box-shadow: var(--shadow-soft);
+  }
+
+  /* ─ Badges ────────────────────────────────────────────────────────────────── */
+  .badge {
+    @apply inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold;
+  }
+  .badge-success {
+    @apply badge bg-green-50 text-green-700 ring-1 ring-green-200 dark:bg-green-950/30 dark:text-green-400 dark:ring-green-900/50;
+  }
+  .badge-warning {
+    @apply badge bg-amber-50 text-amber-700 ring-1 ring-amber-200 dark:bg-amber-950/30 dark:text-amber-400 dark:ring-amber-900/50;
+  }
+  .badge-error {
+    @apply badge bg-red-50 text-red-700 ring-1 ring-red-200 dark:bg-red-950/30 dark:text-red-400 dark:ring-red-900/50;
+  }
+  .badge-info {
+    @apply badge bg-blue-50 text-blue-700 ring-1 ring-blue-200 dark:bg-blue-950/30 dark:text-blue-400 dark:ring-blue-900/50;
+  }
+  .badge-neutral {
+    @apply badge bg-slate-100 text-slate-600 ring-1 ring-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:ring-slate-700/50;
+  }
+
+  /* ─ Alert / Callout blocks ────────────────────────────────────────────────── */
+  .callout-info {
+    @apply rounded-md border border-blue-100 bg-blue-50 p-3 text-sm text-blue-800 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-300;
+  }
+  .callout-success {
+    @apply rounded-md border border-emerald-100 bg-emerald-50 p-3 text-sm text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-300;
+  }
+  .callout-error {
+    @apply rounded-md border border-red-100 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300;
+  }
+  .callout-warning {
+    @apply rounded-md border border-amber-100 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300;
+  }
+
+  /* ─ Table ─────────────────────────────────────────────────────────────────── */
+  .data-table {
+    @apply w-full text-sm;
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+  .data-table thead {
+    @apply bg-slate-50 text-slate-500 dark:bg-slate-900/60 dark:text-slate-400;
+  }
+  .data-table thead th {
+    @apply p-3 text-right font-semibold;
+  }
+  .data-table tbody tr {
+    @apply border-t border-slate-100 transition-colors dark:border-slate-800;
+    transition-duration: var(--duration-fast);
+  }
+  .data-table tbody tr:hover {
+    @apply bg-slate-50 dark:bg-slate-800/40;
+  }
+  .data-table tbody td {
+    @apply p-3;
+  }
+
+  /* ─ Loading skeleton ─────────────────────────────────────────────────────── */
+  .skeleton {
+    @apply animate-pulse rounded-md bg-slate-200 dark:bg-slate-800;
+  }
+
+  /* ─ Divider ──────────────────────────────────────────────────────────────── */
+  .divider {
+    @apply my-4 border-t border-slate-200 dark:border-slate-800;
+  }
+}
