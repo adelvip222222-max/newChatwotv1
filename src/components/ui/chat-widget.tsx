@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Bot, User, Loader2, RotateCcw, Mic, X } from "lucide-react";
+import { Send, Bot, User, Loader2, RotateCcw, Mic, Image as ImageIcon } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -12,6 +12,7 @@ type Message = {
   ts: number;
   loading?: boolean;
   audioUrl?: string;
+  imageUrl?: string;
 };
 
 // ─── Mock Data for Personas ───────────────────────────────────────────────────
@@ -61,7 +62,8 @@ export function ChatWidget({ dark = false }: { dark?: boolean }) {
   const [botAvatar, setBotAvatar] = useState<string | null>(activePersona.avatar);
   const [suggestions, setSuggestions] = useState<string[]>(activePersona.suggestedQuestions);
   
-  const [attachments, setAttachments] = useState<{ type: "audio"; name: string; dataUrl: string }[]>([]);
+  const [attachments, setAttachments] = useState<{ type: "audio" | "image"; name: string; dataUrl: string; mimeType?: string; size?: number }[]>([]);
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const [recording, setRecording] = useState(false);
   const [recorder, setRecorder] = useState<MediaRecorder | null>(null);
 
@@ -103,14 +105,17 @@ export function ChatWidget({ dark = false }: { dark?: boolean }) {
     setError("");
 
     const audioAtt = attachments.find((a) => a.type === "audio");
+    const imageAtt = attachments.find((a) => a.type === "image");
     const audioUrl = audioAtt ? audioAtt.dataUrl : undefined;
+    const imageUrl = imageAtt ? imageAtt.dataUrl : undefined;
 
     const userMsg: Message = { 
       id: uid(), 
       role: "user", 
-      content: text || "تم إرسال مرفق صوتي", 
+      content: text || (imageUrl ? "تم إرسال صورة" : "تم إرسال مرفق صوتي"), 
       ts: Date.now(),
-      audioUrl
+      audioUrl,
+      imageUrl
     };
     
     setMessages((prev) => [...prev, userMsg]);
@@ -165,6 +170,25 @@ export function ChatWidget({ dark = false }: { dark?: boolean }) {
     } catch (err) {
       setError("تعذر تشغيل الميكروفون من المتصفح.");
     }
+  };
+
+  const handleImageChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setError("من فضلك اختر صورة فقط.");
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      setError("حجم الصورة كبير. الحد الحالي 2MB.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setAttachments((prev) => [...prev, { type: "image", name: file.name || "image", dataUrl: reader.result as string, mimeType: file.type, size: file.size }]);
+    };
+    reader.readAsDataURL(file);
   };
 
   const resetChat = () => {
@@ -308,6 +332,14 @@ export function ChatWidget({ dark = false }: { dark?: boolean }) {
                   }`}>
                     <p style={{ whiteSpace: "pre-wrap" }}>{msg.content}</p>
                     
+                    {msg.imageUrl && (
+                      <img
+                        src={msg.imageUrl}
+                        alt="attachment"
+                        className="mt-2 max-h-40 rounded-xl object-cover"
+                      />
+                    )}
+
                     {msg.audioUrl && (
                       <audio 
                         src={msg.audioUrl} 
@@ -376,6 +408,22 @@ export function ChatWidget({ dark = false }: { dark?: boolean }) {
                   style={{ maxHeight: "80px", overflowY: "auto" }}
                 />
                 
+                <input
+                  ref={imageInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleImageChange}
+                />
+                <button
+                  type="button"
+                  onClick={() => imageInputRef.current?.click()}
+                  className={`${dark ? "text-slate-400 hover:text-white" : "text-slate-500 hover:text-primary-600 hover:bg-primary-50"} rounded-full p-2 transition-all`}
+                  title="إرسال صورة"
+                >
+                  <ImageIcon size={16} />
+                </button>
+
                 <button
                   type="button"
                   onClick={handleAudioClick}

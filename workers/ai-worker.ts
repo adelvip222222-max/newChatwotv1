@@ -30,14 +30,17 @@ export const aiWorker = new Worker(
       return { generated: false, reason: "ai_paused" };
     }
 
+    const attachments = Array.isArray(message.attachments) ? message.attachments : [];
+    const attachmentPrompt = describeMessageAttachments(attachments);
+
     const result = await generateAiReply({
       tenantId,
       botId,
       conversationId,
       externalUserId: conversation.externalUserId,
       channel: provider || conversation.provider || conversation.channel,
-      message: message.content,
-      metadata: { traceId, sourceMessageId: messageId }
+      message: message.content || attachmentPrompt || "أرسل العميل مرفقًا.",
+      metadata: { traceId, sourceMessageId: messageId, attachments }
     });
 
     if (!result.reply || !result.messageId) {
@@ -68,3 +71,19 @@ export const aiWorker = new Worker(
 aiWorker.on("failed", (job, error) => {
   void recordFailedJob("ai-processing-queue", job, error);
 });
+
+
+function describeMessageAttachments(attachments: any[]) {
+  if (!attachments.length) return "";
+  const summary = attachments
+    .map((attachment) => {
+      const type = attachment?.type || attachment?.mimeType || "ملف";
+      const name = attachment?.name ? ` (${attachment.name})` : "";
+      if (type === "image" || String(type).startsWith("image/")) return `أرسل العميل صورة${name}`;
+      if (type === "audio" || String(type).startsWith("audio/")) return `أرسل العميل رسالة صوتية${name}`;
+      if (type === "video" || String(type).startsWith("video/")) return `أرسل العميل فيديو${name}`;
+      return `أرسل العميل مرفقًا${name}`;
+    })
+    .join("، ");
+  return summary;
+}

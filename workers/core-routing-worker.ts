@@ -33,7 +33,9 @@ export const coreRoutingWorker = new Worker(
       return { routed: false, reason: "conversation_closed" };
     }
 
-    const insight = await refreshConversationIntelligence({
+    // Do not block the customer reply on heavy inbox analysis. Reply speed comes first.
+    // The analysis is refreshed asynchronously and its AI events are kept out of the chat timeline.
+    void refreshConversationIntelligence({
       tenantId,
       conversationId,
       force: true
@@ -45,9 +47,9 @@ export const coreRoutingWorker = new Worker(
         traceId,
         error: error instanceof Error ? error.message : String(error)
       });
-      return null;
     });
 
+    const insight = null;
     const freshConversation = await Conversation.findOne({ _id: conversationId, tenantId });
     if (!freshConversation) throw new Error("Conversation not found after AI insight");
 

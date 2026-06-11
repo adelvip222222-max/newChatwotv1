@@ -799,7 +799,10 @@ function buildTimeline(messages: any[], notes: any[], events: any[]) {
     mentions: note.mentions?.map((mention: any) => mention.toString()) || []
   }));
 
-  const mappedEvents = events.filter((event) => event.type !== "read").map((event) => ({
+  const mappedEvents = events
+    // AI analysis notes should feed the side panel/insight only, not pollute the customer chat timeline.
+    .filter((event) => event.type !== "read" && event.type !== "ai_event")
+    .map((event) => ({
     id: event._id.toString(),
     type: event.type,
     sender: event.actorId?.name || event.actorType || "system",

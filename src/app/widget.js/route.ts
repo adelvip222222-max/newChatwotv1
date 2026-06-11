@@ -459,7 +459,7 @@ export async function GET() {
       font-family: inherit;
       color: #1e293b;
     }
-    .cz-btn-audio {
+    .cz-btn-audio, .cz-btn-image {
       border: 0;
       background: transparent;
       color: #64748b;
@@ -471,11 +471,11 @@ export async function GET() {
       padding: 6px;
       border-radius: 50%;
     }
-    .cz-btn-audio:hover {
+    .cz-btn-audio:hover, .cz-btn-image:hover {
       color: #9b59d0;
       background: rgba(155, 89, 208, 0.08);
     }
-    .cz-btn-audio svg {
+    .cz-btn-audio svg, .cz-btn-image svg {
       width: 18px;
       height: 18px;
       fill: currentColor;
@@ -515,6 +515,15 @@ export async function GET() {
       fill: currentColor;
       transform: rotate(180deg);
     }
+    .cz-image-preview {
+      display: block;
+      max-width: 220px;
+      max-height: 180px;
+      border-radius: 12px;
+      margin-top: 8px;
+      object-fit: cover;
+      border: 1px solid rgba(148, 163, 184, 0.25);
+    }
     .cz-typing-indicator {
       display: flex;
       align-items: center;
@@ -545,7 +554,7 @@ export async function GET() {
 
   var root = document.createElement("div");
   root.className = "cz-root";
-  root.innerHTML = '<button aria-label="Chat" class="cz-widget-button" data-cz-toggle><svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 9h12v2H6V9zm8 5H6v-2h8v2zm4-6H6V6h12v2z"/></svg></button><div class="cz-layout"><div class="cz-personas-sidebar" data-cz-sidebar></div><section class="cz-panel" data-cz-panel><header class="cz-header"><div class="cz-header-info"><div class="cz-avatar-container" data-cz-avatar-container><svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4V4c0-1.1-.9-2-2-2zm-2 12H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z"/></svg></div><div class="cz-header-text"><div class="cz-bot-name" data-cz-title>مساعد ChatZi</div><div class="cz-bot-status"><span class="cz-status-dot"></span>متصل الآن</div></div></div><button class="cz-close-btn" data-cz-close><svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button></header><div class="cz-log" data-cz-log></div><div class="cz-suggestions" data-cz-suggests style="display:none"></div><div class="cz-attachments" data-cz-attachments style="display:none"></div><form class="cz-form" data-cz-form><div class="cz-input-wrapper"><textarea class="cz-input" data-cz-input rows="1" placeholder="اكتب رسالتك..."></textarea><button type="button" title="رسالة صوتية" class="cz-btn-audio" data-cz-audio><svg viewBox="0 0 24 24"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/></svg></button></div><button class="cz-btn-submit"><svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></button></form></section></div>';
+  root.innerHTML = '<button aria-label="Chat" class="cz-widget-button" data-cz-toggle><svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 9h12v2H6V9zm8 5H6v-2h8v2zm4-6H6V6h12v2z"/></svg></button><div class="cz-layout"><div class="cz-personas-sidebar" data-cz-sidebar></div><section class="cz-panel" data-cz-panel><header class="cz-header"><div class="cz-header-info"><div class="cz-avatar-container" data-cz-avatar-container><svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4V4c0-1.1-.9-2-2-2zm-2 12H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z"/></svg></div><div class="cz-header-text"><div class="cz-bot-name" data-cz-title>مساعد ChatZi</div><div class="cz-bot-status"><span class="cz-status-dot"></span>متصل الآن</div></div></div><button class="cz-close-btn" data-cz-close><svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button></header><div class="cz-log" data-cz-log></div><div class="cz-suggestions" data-cz-suggests style="display:none"></div><div class="cz-attachments" data-cz-attachments style="display:none"></div><form class="cz-form" data-cz-form><div class="cz-input-wrapper"><textarea class="cz-input" data-cz-input rows="1" placeholder="اكتب رسالتك..."></textarea><input type="file" accept="image/*" data-cz-image-input style="display:none" /><button type="button" title="إرسال صورة" class="cz-btn-image" data-cz-image><svg viewBox="0 0 24 24"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 11.5l2.5 3.01L14.5 10l4.5 6H5l3.5-4.5z"/></svg></button><button type="button" title="رسالة صوتية" class="cz-btn-audio" data-cz-audio><svg viewBox="0 0 24 24"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/></svg></button></div><button class="cz-btn-submit"><svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></button></form></section></div>';
   document.body.appendChild(root);
 
   var panel = root.querySelector("[data-cz-panel]");
@@ -556,12 +565,14 @@ export async function GET() {
   var log = root.querySelector("[data-cz-log]");
   var filesBox = root.querySelector("[data-cz-attachments]");
   var audioButton = root.querySelector("[data-cz-audio]");
+  var imageButton = root.querySelector("[data-cz-image]");
+  var imageInput = root.querySelector("[data-cz-image-input]");
   var suggestsBox = root.querySelector("[data-cz-suggests]");
   var sidebarBox = root.querySelector("[data-cz-sidebar]");
   var typingIndicator = null;
   var personasData = [];
 
-  function add(sender, text, audioUrl) {
+  function add(sender, text, audioUrl, imageUrl) {
     var wrapper = document.createElement("div");
     wrapper.className = "cz-msg-wrapper " + (sender === "user" ? "user" : "assistant");
     
@@ -583,6 +594,14 @@ export async function GET() {
       bubble.appendChild(p);
     }
     
+    if (imageUrl) {
+      var img = document.createElement("img");
+      img.src = imageUrl;
+      img.alt = "image attachment";
+      img.className = "cz-image-preview";
+      bubble.appendChild(img);
+    }
+
     if (audioUrl) {
       var aud = document.createElement("audio");
       aud.src = audioUrl;
@@ -629,7 +648,8 @@ export async function GET() {
     state.attachments.forEach(function(att, idx) {
       var badge = document.createElement("div");
       badge.className = "cz-attachment-badge";
-      badge.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/></svg><span>' + att.name + "</span>";
+      var iconPath = att.type === "image" ? "M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 11.5l2.5 3.01L14.5 10l4.5 6H5l3.5-4.5z" : "M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z";
+      badge.innerHTML = '<svg viewBox="0 0 24 24"><path d="' + iconPath + '"/></svg><span>' + att.name + "</span>";
       
       var removeBtn = document.createElement("button");
       removeBtn.type = "button";
@@ -684,7 +704,9 @@ export async function GET() {
     }
     
     // Welcome message
-    add("assistant", "مرحباً! 👋 أنا " + ((data.bot && data.bot.name) || "مساعد ChatZi") + ". كيف يمكنني مساعدتك اليوم؟");
+    var welcomeName = (data.bot && data.bot.name) || "ChatZi";
+    var personaHint = data.personas && data.personas.length ? "\n\nيمكنك اختيار أحد الموظفين الآليين من الأيقونات الجانبية، أو اكتب طلبك مباشرة." : "";
+    add("assistant", "وعليكم السلام ورحمة الله وبركاته. أنا المساعد الذكي لـ " + welcomeName + ". كيف أقدر أساعدك اليوم؟" + personaHint);
     
     // Render suggestions
     renderSuggestions(data.suggestions);
@@ -726,7 +748,7 @@ export async function GET() {
       root.querySelectorAll(".cz-persona-icon").forEach(function(el) { el.classList.remove("active"); });
       defaultIcon.classList.add("active");
       root.querySelector("[data-cz-title]").textContent = botObj.name || "مساعد ChatZi";
-      add("assistant", "مرحباً! 👋 أنا " + (botObj.name || "مساعد ChatZi") + ". كيف يمكنني مساعدتك اليوم؟");
+      add("assistant", "وعليكم السلام ورحمة الله وبركاته. أنا المساعد الذكي لـ " + (botObj.name || "ChatZi") + ". كيف أقدر أساعدك اليوم؟");
       renderSuggestions(baseSuggestions);
     });
     sidebarBox.appendChild(defaultIcon);
@@ -755,10 +777,10 @@ export async function GET() {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
+              botId: botId,
               conversationId: state.conversationId,
-              tenantId: state.tenantId,
-              content: "SELECT_PERSONA_" + p.id,
-              sender: "user"
+              visitorId: visitorId,
+              message: "SELECT_PERSONA_" + p.id
             })
           });
         } catch(e) {}
@@ -901,6 +923,27 @@ export async function GET() {
 
   close.addEventListener("click", function() { setOpen(false); });
 
+  imageButton.addEventListener("click", function() {
+    imageInput.click();
+  });
+
+  imageInput.addEventListener("change", async function() {
+    var file = imageInput.files && imageInput.files[0];
+    imageInput.value = "";
+    if (!file) return;
+    if (!file.type || !file.type.startsWith("image/")) {
+      add("assistant", "من فضلك اختر صورة فقط.");
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      add("assistant", "حجم الصورة كبير. الحد الحالي 2MB.");
+      return;
+    }
+    var dataUrl = await fileToDataUrl(file);
+    state.attachments.push({ type: "image", name: file.name || "image", dataUrl: dataUrl, mimeType: file.type, size: file.size });
+    renderFiles();
+  });
+
   // Voice recording
   audioButton.addEventListener("click", async function() {
     try {
@@ -950,9 +993,11 @@ export async function GET() {
     renderFiles();
     
     var audioAtt = attachments.find(function(a) { return a.type === "audio"; });
+    var imageAtt = attachments.find(function(a) { return a.type === "image"; });
     var audioUrl = audioAtt ? audioAtt.dataUrl : null;
+    var imageUrl = imageAtt ? imageAtt.dataUrl : null;
     
-    add("user", text, audioUrl);
+    add("user", text, audioUrl, imageUrl);
     showTyping();
     
     try {

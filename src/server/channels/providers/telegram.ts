@@ -1,6 +1,29 @@
 import { ChannelDocument } from "@/lib/models";
 import { decryptSecret } from "@/lib/crypto";
-import { ProviderAdapter, NormalizedIncomingMessage, SendMessageParams } from "../types";
+import { ProviderAdapter, NormalizedAttachment, NormalizedIncomingMessage, SendMessageParams } from "../types";
+
+
+function normalizeTelegramAttachments(msg: any): NormalizedAttachment[] {
+  const attachments: NormalizedAttachment[] = [];
+  const bestPhoto = Array.isArray(msg.photo) ? msg.photo[msg.photo.length - 1] : null;
+  if (bestPhoto?.file_id) {
+    attachments.push({ type: "image", url: `telegram://file/${bestPhoto.file_id}`, name: "photo.jpg", size: bestPhoto.file_size });
+  }
+  if (msg.voice?.file_id) {
+    attachments.push({ type: "audio", url: `telegram://file/${msg.voice.file_id}`, name: "voice.ogg", size: msg.voice.file_size, mimeType: msg.voice.mime_type });
+  }
+  if (msg.audio?.file_id) {
+    attachments.push({ type: "audio", url: `telegram://file/${msg.audio.file_id}`, name: msg.audio.file_name || "audio", size: msg.audio.file_size, mimeType: msg.audio.mime_type });
+  }
+  if (msg.document?.file_id) {
+    attachments.push({ type: "document", url: `telegram://file/${msg.document.file_id}`, name: msg.document.file_name || "document", size: msg.document.file_size, mimeType: msg.document.mime_type });
+  }
+  return attachments;
+}
+
+function telegramText(msg: any) {
+  return msg.text || msg.caption || (msg.voice ? "أرسل العميل رسالة صوتية." : "") || (msg.photo ? "أرسل العميل صورة." : "") || (msg.document ? "أرسل العميل مستندًا." : "");
+}
 
 function resolveTelegramToken(channel: ChannelDocument) {
   const encrypted = channel.config?.botTokenEncrypted;
@@ -28,7 +51,8 @@ export const telegramAdapter: ProviderAdapter = {
       externalEventId: payload.update_id.toString(),
       externalUserId: msg.chat.id.toString(),
       externalMessageId: msg.message_id.toString(),
-      text: msg.text || "",
+      text: telegramText(msg),
+      attachments: normalizeTelegramAttachments(msg),
       customer: {
         name: `${msg.from.first_name || ""} ${msg.from.last_name || ""}`.trim(),
         username: msg.from.username,

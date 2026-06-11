@@ -2,10 +2,42 @@ import crypto from "crypto";
 import { ChannelDocument } from "@/lib/models";
 import { decryptSecret } from "@/lib/crypto";
 import { logger } from "@/lib/logger";
-import { ProviderAdapter, NormalizedIncomingMessage, SendMessageParams } from "../types";
+import { ProviderAdapter, NormalizedAttachment, NormalizedIncomingMessage, SendMessageParams } from "../types";
 
 const META_GRAPH_VERSION = "v19.0";
 const META_GRAPH_BASE = `https://graph.facebook.com/${META_GRAPH_VERSION}`;
+
+
+function normalizeWhatsAppAttachments(message: any): NormalizedAttachment[] {
+  const attachments: NormalizedAttachment[] = [];
+  const mediaTypes: Array<NormalizedAttachment["type"]> = ["image", "audio", "video", "document"];
+  for (const type of mediaTypes) {
+    const media = message?.[type];
+    if (!media) continue;
+    const mediaId = media.id ? String(media.id) : "";
+    attachments.push({
+      type,
+      url: media.link || (mediaId ? `meta://media/${mediaId}` : ""),
+      name: media.filename || `${type}-${mediaId || Date.now()}`,
+      mimeType: media.mime_type
+    });
+  }
+  return attachments.filter((attachment) => Boolean(attachment.url));
+}
+
+function textFromWhatsAppMessage(message: any, interactiveReplyTitle?: string, interactiveReplyId?: string) {
+  return message.text?.body
+    || message.button?.text
+    || interactiveReplyTitle
+    || interactiveReplyId
+    || message.image?.caption
+    || message.video?.caption
+    || message.document?.caption
+    || (message.audio || message.voice ? "أرسل العميل رسالة صوتية." : "")
+    || (message.image ? "أرسل العميل صورة." : "")
+    || (message.document ? "أرسل العميل مستندًا." : "")
+    || "";
+}
 
 function resolveAppSecret(channel?: ChannelDocument): string {
   const perChannel = channel?.config?.appSecret as string | undefined;
@@ -57,8 +89,8 @@ export const whatsappAdapter: ProviderAdapter = {
             externalEventId: String(message.id),
             externalUserId: String(message.from),
             externalMessageId: String(message.id),
-            text: message.text?.body || message.button?.text || interactiveReplyTitle || interactiveReplyId || "",
-            attachments: [],
+            text: textFromWhatsAppMessage(message, interactiveReplyTitle, interactiveReplyId),
+            attachments: normalizeWhatsAppAttachments(message),
             customer: {
               name: contact.profile?.name,
               phone: message.from

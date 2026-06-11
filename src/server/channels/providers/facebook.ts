@@ -2,7 +2,7 @@ import crypto from "crypto";
 import { ChannelDocument } from "@/lib/models";
 import { decryptSecret } from "@/lib/crypto";
 import { logger } from "@/lib/logger";
-import { ProviderAdapter, NormalizedIncomingMessage, SendMessageParams } from "../types";
+import { ProviderAdapter, NormalizedAttachment, NormalizedIncomingMessage, SendMessageParams } from "../types";
 
 const META_GRAPH_VERSION = "v18.0";
 const META_GRAPH_BASE = `https://graph.facebook.com/${META_GRAPH_VERSION}`;
@@ -23,6 +23,26 @@ function verifyHmac(rawBody: string, signatureHeader: string | null, secret: str
   const b = Buffer.from(candidate, "hex");
   if (a.length !== b.length) return false;
   return crypto.timingSafeEqual(a, b);
+}
+
+
+function normalizeFacebookAttachments(attachments?: any[]): NormalizedAttachment[] {
+  if (!Array.isArray(attachments)) return [];
+  return attachments.map((attachment: any): NormalizedAttachment | null => {
+    const type = attachment?.type as string | undefined;
+    const url = attachment?.payload?.url as string | undefined;
+    if (!url) return null;
+    let normalizedType: NormalizedAttachment["type"] = "other";
+    if (type === "image") normalizedType = "image";
+    else if (type === "audio") normalizedType = "audio";
+    else if (type === "video") normalizedType = "video";
+    else if (type === "file") normalizedType = "document";
+    return { type: normalizedType, url, name: attachment?.title || type || "attachment" };
+  }).filter((item): item is NormalizedAttachment => item !== null);
+}
+
+function facebookText(message: any, postback: any) {
+  return message?.text || postback?.title || (message?.attachments?.length ? "أرسل العميل مرفقًا." : "");
 }
 
 const KNOWN_FB_ERRORS: Record<number, string> = {
@@ -66,8 +86,8 @@ export const facebookAdapter: ProviderAdapter = {
           externalUserId: String(item.sender.id),
           externalThreadId: String(item.recipient?.id || entry.id || ""),
           externalMessageId: String(mid),
-          text: item.message?.text || item.postback?.title || "",
-          attachments: [],
+          text: facebookText(item.message, item.postback),
+          attachments: normalizeFacebookAttachments(item.message?.attachments),
           customer: {},
           timestamp: item.timestamp ? new Date(Number(item.timestamp)) : new Date(),
           raw: item,

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Plus, Users } from "lucide-react";
+import { Bot, Plus, Sparkles } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { getPersonas } from "@/lib/dashboard-data";
 import { getLocale } from "@/lib/i18n";
@@ -48,10 +48,14 @@ export default async function PersonasPage() {
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex items-start gap-3">
                       <div className="rounded-full bg-primary/10 p-2 text-primary">
-                        <Users size={16} />
+                        <Bot size={16} />
                       </div>
                       <div>
                         <p className="text-base font-semibold text-ink">{persona.roleName}</p>
+                        <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700 dark:bg-violet-950/60 dark:text-violet-200">
+                          <Sparkles size={11} />
+                          {isAr ? "ذكاء اصطناعي" : "AI employee"}
+                        </span>
                         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{persona.aiModelName}</p>
                       </div>
                     </div>
@@ -84,9 +88,13 @@ export default async function PersonasPage() {
                     <td className="p-3 font-semibold text-ink">
                       <div className="flex items-center gap-2">
                         <div className="rounded-full bg-primary/10 p-2 text-primary">
-                          <Users size={16} />
+                          <Bot size={16} />
                         </div>
-                        {persona.roleName}
+                        <span>{persona.roleName}</span>
+                        <span className="inline-flex items-center gap-1 rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700 dark:bg-violet-950/60 dark:text-violet-200">
+                          <Sparkles size={11} />
+                          AI
+                        </span>
                       </div>
                     </td>
                     <td className="p-3 text-slate-600 dark:text-slate-400">{persona.aiModelName}</td>
@@ -114,7 +122,7 @@ export default async function PersonasPage() {
           </>
         ) : (
           <div className="p-12 text-center text-slate-500 dark:text-slate-400">
-            <Users size={48} className="mx-auto mb-4 opacity-20" />
+            <Bot size={48} className="mx-auto mb-4 opacity-20" />
             <p className="text-lg font-medium text-slate-700 dark:text-slate-300">{labels.emptyTitle}</p>
             <p className="mb-6 mt-1 text-sm">{labels.emptyDesc}</p>
             <Link href="/dashboard/personas/new" className="btn-primary inline-flex">

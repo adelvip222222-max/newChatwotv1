@@ -389,11 +389,10 @@ export async function searchKnowledge(input: {
   const semanticCandidates = await KnowledgeChunk.find({
     tenantId: input.tenantId,
     botId: input.botId,
-    embeddingProvider: queryProvider,
     ...notExpired
   })
     .sort({ updatedAt: -1 })
-    .limit(250)
+    .limit(Number(process.env.KNOWLEDGE_CANDIDATE_LIMIT || 600))
     .lean();
 
   const keywordCandidates = queryKeywords.length
@@ -401,7 +400,6 @@ export async function searchKnowledge(input: {
         {
           tenantId: input.tenantId,
           botId: input.botId,
-          embeddingProvider: queryProvider,
           ...notExpired,
           $text: { $search: queryKeywords.join(" ") }
         },
@@ -418,9 +416,16 @@ export async function searchKnowledge(input: {
 
   const scored = [...candidates.values()]
     .map((item) => {
-      const semanticScore = cosineSimilarity(queryEmbedding, item.embedding || []);
+      const itemEmbedding = Array.isArray(item.embedding) ? item.embedding : [];
+      const comparableQueryEmbedding = itemEmbedding.length === queryEmbedding.length
+        ? queryEmbedding
+        : localHashEmbedding(question);
+      const comparableItemEmbedding = itemEmbedding.length === comparableQueryEmbedding.length
+        ? itemEmbedding
+        : localHashEmbedding(item.text || "");
+      const semanticScore = cosineSimilarity(comparableQueryEmbedding, comparableItemEmbedding);
       const keywordScore = keywordOverlap(queryKeywords, item.keywords || [], item.normalizedText || "");
-      const score = Math.round((semanticScore * 0.68 + keywordScore * 0.32) * 100);
+      const score = Math.round((semanticScore * 0.45 + keywordScore * 0.55) * 100);
       return {
         text: item.text,
         score,
@@ -477,10 +482,10 @@ export function buildKnowledgePrompt(input: {
   });
 
   return [
-    "قاعدة المعرفة هي مصدر الحقيقة الأول. استخدم المقاطع التالية قبل أي معرفة عامة.",
-    "امنع الردود الضعيفة مثل: لا أعرف، لا أملك معلومات، سأحولك للدعم، إلا بعد محاولات بحث وتوضيح.",
-    "إذا كانت الثقة أعلى من 70 أجب مباشرة. بين 40 و70 أجب مع تنبيه لطيف أن المعلومة قد تحتاج مراجعة. أقل من 40 اسأل سؤالًا توضيحيًا محددًا.",
-    "لا تحول المحادثة إلى موظف إلا إذا طلب المستخدم ذلك صراحة أو كانت عملية مالية/إدارية تحتاج صلاحية بشرية.",
+    "قاعدة المعرفة هي مصدر الحقيقة الأول. اجعل 90% من الرد مبنيًا على هذه المقاطع عند توفرها.",
+    "لا تقل لا أعرف ولا تحول للدعم إذا كان هناك أي مقطع مفيد؛ استخرج أفضل إجابة مباشرة من المقاطع المتاحة.",
+    "إذا كانت الثقة أعلى من 50 أجب مباشرة. بين 15 و50 أجب بإجابة قصيرة مبنية على الموجود ثم اسأل سؤالًا توضيحيًا واحدًا. أقل من 15 اسأل سؤالًا توضيحيًا محددًا.",
+    "لا تحول المحادثة إلى موظف إلا إذا طلب المستخدم ذلك صراحة أو كانت عملية مالية/إدارية تحتاج صلاحية بشرية أو انتهت محاولات التوضيح.",
     `Intent: ${input.intent}`,
     `Keywords: ${input.keywords.join(", ") || "-"}`,
     `Confidence: ${input.confidence}/100`,
