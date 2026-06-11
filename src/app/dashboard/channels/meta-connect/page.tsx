@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { AlertTriangle, CheckCircle, Loader2, MessageCircle, Image, ArrowRight, ShieldAlert, Info } from "lucide-react";
+import { AlertTriangle, CheckCircle, Loader2, ArrowRight, ShieldAlert, Info } from "lucide-react";
+import { FaFacebook, FaInstagram } from "react-icons/fa";
 
 const REQUIRED_FB_PERMISSIONS = ["pages_messaging", "pages_show_list", "pages_manage_metadata"];
 const REQUIRED_IG_PERMISSIONS = ["instagram_manage_messages", "instagram_basic", "pages_show_list"];
@@ -74,8 +75,8 @@ function WebhookBadge({ status }: { status: string }) {
 export default function MetaConnectPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const sessionKey = searchParams.get("session") ?? "";
-  const oauthError = searchParams.get("oauth_error");
+  const sessionKey = searchParams?.get("session") ?? "";
+  const oauthError = searchParams?.get("oauth_error");
 
   const [step, setStep] = useState<Step>(oauthError ? "error" : "loading");
   const [errorMessage, setErrorMessage] = useState(oauthError ?? "");
@@ -258,14 +259,14 @@ export default function MetaConnectPage() {
                     {connecting === `facebook:${page.pageId}:` ? (
                       <Loader2 className="animate-spin" size={14} />
                     ) : (
-                      <MessageCircle size={14} />
+                      <FaFacebook size={14} />
                     )}
                     Connect Messenger
                   </button>
 
                   {igAccounts.length === 0 && (
                     <span className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-3 py-1.5 text-sm text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-                      <Image size={14} />
+                      <FaInstagram size={14} />
                       No Instagram account linked
                     </span>
                   )}
@@ -282,7 +283,7 @@ export default function MetaConnectPage() {
                           {connecting === `instagram:${page.pageId}:${ig.instagramBusinessId}` ? (
                             <Loader2 className="animate-spin" size={14} />
                           ) : (
-                            <Image size={14} />
+                            <FaInstagram size={14} />
                           )}
                           Connect @{ig.username || ig.name}
                         </button>
