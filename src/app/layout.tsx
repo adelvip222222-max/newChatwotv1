@@ -2,6 +2,8 @@ import type { Metadata, Viewport } from "next";
 import NextTopLoader from "nextjs-toploader";
 import { ThemeProvider } from "@/components/theme-provider";
 import { I18nProvider } from "@/components/i18n-provider";
+import { GlobalShellControls } from "@/components/global-shell-controls";
+import { PwaRegister } from "@/components/pwa-register";
 import { getLocale } from "@/lib/i18n";
 import "./globals.css";
 
@@ -14,11 +16,22 @@ export const metadata: Metadata = {
   description:
     "منصة ChatZi للمحادثات الذكية متعددة القنوات — WhatsApp، Telegram، Facebook، وأكثر. مدعوم بالذكاء الاصطناعي.",
   robots: { index: false, follow: false }, // Private SaaS — no public indexing
+  manifest: "/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "ChatZi",
+  },
 };
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  viewportFit: "cover",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
+    { media: "(prefers-color-scheme: dark)", color: "#090d16" },
+  ],
 };
 
 // ─── Root Layout ─────────────────────────────────────────────────────────────
@@ -46,7 +59,9 @@ export default async function RootLayout({
                 try {
                   var theme = localStorage.getItem('theme');
                   var systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-                  if (theme === 'dark' || (!theme && systemDark)) {
+                  var themeMode = theme || 'system';
+                  document.documentElement.dataset.theme = themeMode;
+                  if (themeMode === 'dark' || (themeMode === 'system' && systemDark)) {
                     document.documentElement.classList.add('dark');
                   } else {
                     document.documentElement.classList.remove('dark');
@@ -67,6 +82,8 @@ export default async function RootLayout({
         <I18nProvider initialLocale={locale}>
           <ThemeProvider>
             {children}
+            <PwaRegister />
+            <GlobalShellControls />
           </ThemeProvider>
         </I18nProvider>
       </body>

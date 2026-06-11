@@ -32,6 +32,7 @@ export const rolePermissions: Record<Role, readonly Permission[]> = {
     permissions.inboxRead,
     permissions.inboxReply,
     permissions.knowledgeRead,
+    permissions.knowledgeManage,
     permissions.aiRead,
     permissions.settingsRead
   ],

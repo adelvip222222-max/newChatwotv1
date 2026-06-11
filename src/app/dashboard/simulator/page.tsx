@@ -1,5 +1,7 @@
 import { requireSession } from "@/lib/auth";
 import { Bot } from "@/lib/models";
+export const dynamic = "force-dynamic";
+
 import { connectToDatabase } from "@/lib/mongodb";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { SimulatorClient } from "./client";

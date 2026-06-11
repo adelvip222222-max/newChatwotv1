@@ -1,10 +1,10 @@
-import { requireAdmin } from "@/lib/authz";
+import { requirePlatformAdmin } from "@/lib/authz";
 import { getBillingCatalog } from "@/lib/billing";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { BillingAdmin } from "@/components/admin/billing-admin";
 
 export default async function AdminBillingPage() {
-  const session = await requireAdmin();
+  const session = await requirePlatformAdmin();
   const catalog = await getBillingCatalog(session.user.tenantId);
 
   return (

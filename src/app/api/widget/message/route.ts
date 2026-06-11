@@ -1,40 +1,68 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { generateAiReply } from "@/lib/ai";
+import { checkRateLimit, getClientIp } from "@/lib/api-security";
+import { Channel, Conversation } from "@/lib/models";
+import { connectToDatabase } from "@/lib/mongodb";
+import { enqueueInboundWebhook } from "@/server/channels/webhookIngress";
 
 const schema = z.object({
-  tenantId: z.string().min(1),
   botId: z.string().min(1),
   conversationId: z.string().min(1),
   visitorId: z.string().min(1),
-  message: z.string().min(1),
-  attachments: z.array(z.object({
-    type: z.enum(["image", "audio"]),
-    name: z.string(),
-    dataUrl: z.string().optional()
-  })).optional()
+  message: z.string().trim().min(1),
+  attachments: z.array(z.any()).optional()
 });
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
+    checkRateLimit(`widget-message:${getClientIp(request)}`, { limit: 120, windowMs: 60_000 });
     const body = schema.parse(await request.json());
-    const result = await generateAiReply({
-      tenantId: body.tenantId,
+    await connectToDatabase();
+
+    const conversation = await Conversation.findOne({
+      _id: body.conversationId,
       botId: body.botId,
-      conversationId: body.conversationId,
-      externalUserId: body.visitorId,
       channel: "website",
-      message: body.attachments?.length
-        ? `${body.message}\n\nمرفقات المستخدم: ${body.attachments.map((item) => `${item.type}: ${item.name}`).join(", ")}`
-        : body.message,
-      metadata: {
+      externalUserId: body.visitorId,
+      status: { $in: ["open", "snoozed"] }
+    });
+
+    if (!conversation) {
+      return NextResponse.json({ error: "Conversation not found" }, { status: 404 });
+    }
+
+    const channel = await Channel.findOne({
+      tenantId: conversation.tenantId,
+      botId: body.botId,
+      type: "website",
+      isActive: true
+    });
+
+    if (!channel) {
+      return NextResponse.json({ error: "Website channel is not active" }, { status: 404 });
+    }
+
+    const result = await enqueueInboundWebhook({
+      provider: "website",
+      channelId: channel._id.toString(),
+      tenantId: conversation.tenantId.toString(),
+      request,
+      payload: {
+        id: `${body.conversationId}:${Date.now()}`,
+        userId: body.visitorId,
+        messageId: `web-in-${Date.now()}`,
+        text: body.message,
         attachments: body.attachments || []
       }
     });
 
-    return NextResponse.json(result);
+    if (!result.ok) {
+      return NextResponse.json({ error: result.error }, { status: 400 });
+    }
+
+    return NextResponse.json({ ok: true, queued: true, reply: "", traceId: result.traceId });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "تعذر إرسال الرسالة.";
+    const message = error instanceof Error ? error.message : "Internal error";
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }

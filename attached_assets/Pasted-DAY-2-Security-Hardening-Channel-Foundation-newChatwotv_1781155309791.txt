@@ -1,0 +1,456 @@
+DAY 2 — Security Hardening & Channel Foundation
+
+أنت تعمل على مشروع newChatwotv1.
+
+Day 1 اكتشف مشاكل حرجة، واليوم الثاني هدفه الأساسي:
+
+1. إغلاق أخطر ثغرات الأمان.
+2. تجهيز القنوات لتعمل بشكل حقيقي.
+3. منع أي fake/stub behavior في production.
+4. تثبيت RBAC و Super Admin.
+5. جعل WhatsApp و Facebook آمنين كبداية قبل استكمال باقي القنوات.
+
+⸻
+
+قواعد ملزمة
+
+ممنوع تنفيذ أي قناة أو تفعيلها Production قبل:
+
+* webhook verification صحيح.
+* tenant isolation صحيح.
+* RBAC صحيح.
+* لا يوجد return true في verification.
+* لا يوجد sendMessage() يرجع success بدون إرسال فعلي.
+* لا يوجد token ظاهر في logs أو frontend.
+* كل secrets تكون server-side فقط.
+* أي تغيير يجب أن يحافظ على Clean Code و Maintainability.
+
+⸻
+
+أهم مشاكل Day 1 التي يجب علاجها اليوم
+
+Critical
+
+1. WhatsApp webhook verification معطلة.
+2. Facebook webhook verification معطلة.
+3. Super Admin check مكسور.
+4. لا يوجد RBAC enforcement على API routes.
+5. WhatsApp sendMessage مجرد stub.
+
+⸻
+
+Task 2.1 — Fix WhatsApp Webhook Verification
+
+الهدف
+
+إصلاح WhatsApp webhook verification بشكل آمن.
+
+المطلوب
+
+* لا تستخدم return true.
+* اقرأ raw body قبل JSON parsing.
+* تحقق من header:
+
+X-Hub-Signature-256
+
+* استخدم HMAC-SHA256:
+
+sha256={hmac(rawBody, appSecret)}
+
+* appSecret يجب أن يأتي من channel config أو env بطريقة آمنة.
+* أضف GET handler للتحقق من Meta webhook challenge:
+
+hub.mode
+hub.verify_token
+hub.challenge
+
+* verify_token يجب أن يطابق channel.config.verifyToken.
+* لو verification فشل: return 403.
+* لو channel غير موجود: return 404 أو 400 بشكل واضح.
+
+الملفات المتوقعة
+
+src/server/channels/providers/stubs.ts
+src/server/channels/providers/whatsapp.ts
+src/app/api/channels/whatsapp/webhook/route.ts
+src/server/channels/incomingPipeline.ts
+
+لو adapter موجود في ملف مختلف، استخدم البنية الحالية ولا تكسرها.
+
+⸻
+
+Task 2.2 — Fix Facebook Webhook Verification
+
+الهدف
+
+تأمين Facebook Messenger webhook.
+
+المطلوب
+
+* لا تستخدم return true.
+* نفذ HMAC-SHA256 باستخدام:
+
+X-Hub-Signature-256
+
+* أضف GET handler لـ Meta webhook challenge.
+* تحقق من verify_token.
+* اربط webhook بصفحة Facebook الصحيحة من خلال:
+
+pageId
+channel.config.pageId
+
+* فشل التحقق = 403.
+* channel غير موجود = 404 أو 400.
+
+الملفات المتوقعة
+
+src/server/channels/providers/facebook.ts
+src/app/api/channels/facebook/webhook/route.ts
+src/server/channels/incomingPipeline.ts
+
+⸻
+
+Task 2.3 — Fix Super Admin Security
+
+المشكلة
+
+حاليًا requirePlatformAdmin() يعتمد على role === "admin"، وهذا يسمح لأي tenant admin بالدخول إلى /admin/*.
+
+المطلوب
+
+* أضف field جديد في User model:
+
+isSuperAdmin: boolean
+
+* default = false.
+* عدّل requirePlatformAdmin() ليعتمد فقط على:
+
+session.user.isSuperAdmin === true
+
+أو يجلب المستخدم من DB ويتحقق من isSuperAdmin.
+
+* لا تعتمد على tenant role.
+* حدّث NextAuth session/JWT ليشمل isSuperAdmin إن احتاج.
+* أضف script آمن لتعيين أول super admin من env:
+
+SUPER_ADMIN_EMAIL
+
+مثال:
+
+npm run make:super-admin -- email@example.com
+
+أو script مباشر داخل scripts/.
+
+الملفات المتوقعة
+
+src/lib/models/user.ts
+src/lib/auth.ts
+src/lib/authz.ts
+src/app/admin/
+src/app/api/admin/
+scripts/make-super-admin.ts
+
+⸻
+
+Task 2.4 — Implement RBAC Permission Enforcement
+
+المشكلة
+
+Permission system موجود لكنه غير مطبق فعليًا على API routes.
+
+المطلوب
+
+أنشئ helper:
+
+requirePermission(session, permission)
+
+أو:
+
+assertPermission(user, permission)
+
+ويستخدم permission map الموجود في:
+
+src/server/permissions/
+
+طبّق الصلاحيات على الأقل على هذه routes
+
+/api/inbox/conversations/[id]/reply       -> inbox.reply
+/api/inbox/conversations/[id]/assignment  -> inbox.assign
+/api/knowledge/*                          -> knowledge.manage
+/api/settings/*                           -> settings.manage
+/api/channels/*                           -> settings.manage أو channels.manage لو موجودة
+/api/billing/*                            -> billing.manage أو billing.read حسب العملية
+
+قواعد مهمة
+
+* viewer لا يستطيع reply.
+* agent يستطيع reply لكن لا يدير billing.
+* manager يستطيع assign.
+* owner/admin يستطيعان إدارة settings.
+* super admin لا يعني tenant permission تلقائيًا إلا في admin context.
+
+المطلوب توثيقه
+
+أضف جدول صلاحيات في:
+
+docs/architecture/RBAC_ENFORCEMENT.md
+
+⸻
+
+Task 2.5 — Remove Unsafe Dev Channel Fallback
+
+المشكلة
+
+resolveInboundChannel() يحتوي fallback يستخدم أول قناة active في dev mode.
+
+المطلوب
+
+* احذف fallback أو اجعله محصورًا جدًا خلف env واضح:
+
+ALLOW_UNSAFE_CHANNEL_FALLBACK=false
+
+* ممنوع أن يعمل في production.
+* أضف logs واضحة عند فشل resolve channel.
+* لا تربط webhook بقناة بالصدفة.
+
+الملف المتوقع
+
+src/server/channels/incomingPipeline.ts
+
+⸻
+
+Task 2.6 — Implement WhatsApp sendMessage
+
+المشكلة
+
+WhatsApp sendMessage() يرجع success بدون إرسال فعلي.
+
+المطلوب
+
+افصل WhatsApp adapter في ملف مستقل:
+
+src/server/channels/providers/whatsapp.ts
+
+ونفذ:
+
+sendMessage(params)
+
+باستخدام Meta Cloud API:
+
+POST https://graph.facebook.com/v18.0/{phone_number_id}/messages
+Authorization: Bearer {access_token}
+
+دعم MVP
+
+* text messages.
+* template-ready structure.
+* parse external message id.
+* handle errors.
+* update message delivery status.
+* لا تخزن أو تطبع access token في logs.
+* access token يكون encrypted at rest، ويفك server-side فقط.
+
+حالات الخطأ
+
+تعامل مع:
+
+* invalid token.
+* phone_number_id missing.
+* 24-hour window violation.
+* rate limit.
+* Meta API error response.
+
+⸻
+
+Task 2.7 — Prepare Facebook Adapter Extraction
+
+الهدف
+
+تحضير Facebook ليكتمل في Day 3.
+
+المطلوب اليوم
+
+* افصل Facebook adapter من stubs إلى:
+
+src/server/channels/providers/facebook.ts
+
+* أصلح verification.
+* جهز sendMessage structure لكن لا تترك fake success.
+* إذا لم يكتمل الإرسال اليوم، أرجع:
+
+{ success: false, error: "FACEBOOK_SEND_NOT_IMPLEMENTED" }
+
+بدل fake success.
+
+⸻
+
+Task 2.8 — Deduplicate Conversations APIs
+
+المشكلة
+
+يوجد:
+
+/api/conversations
+/api/inbox/conversations
+
+المطلوب
+
+* افحص أي route يستخدمه frontend.
+* حدد canonical route.
+* غالبًا يكون:
+
+/api/inbox/conversations
+
+* لا تحذف route القديم إن كان سيكسر frontend.
+* أضف deprecation warning أو redirect داخلي.
+* وثّق القرار في:
+
+docs/reports/DAY2_API_DEDUPLICATION_NOTES.md
+
+⸻
+
+Task 2.9 — Tests Required
+
+أضف tests تغطي:
+
+Webhook Security
+
+* WhatsApp valid signature = accepted.
+* WhatsApp invalid signature = 403.
+* WhatsApp missing signature = 403.
+* Facebook valid signature = accepted.
+* Facebook invalid signature = 403.
+* Facebook challenge verification works.
+* wrong verify_token rejected.
+
+Super Admin
+
+* tenant admin لا يدخل /admin/*.
+* user with isSuperAdmin=true يدخل.
+* owner ليس super admin تلقائيًا.
+
+RBAC
+
+* viewer cannot reply.
+* agent can reply.
+* viewer cannot manage knowledge.
+* admin/owner can manage knowledge.
+
+WhatsApp Send
+
+* sends valid text payload to Meta.
+* handles Meta error.
+* does not log token.
+* returns externalMessageId.
+
+⸻
+
+Task 2.10 — Documentation
+
+حدّث أو أنشئ:
+
+docs/reports/DAY2_FINAL_REPORT.md
+docs/architecture/RBAC_ENFORCEMENT.md
+docs/architecture/WEBHOOK_SECURITY.md
+docs/operations/META_CHANNELS_SETUP.md
+
+⸻
+
+Day 2 Final Report Required
+
+أنشئ:
+
+docs/reports/DAY2_FINAL_REPORT.md
+
+ويحتوي على:
+
+1. Summary
+
+* ماذا تم إصلاحه؟
+* ماذا بقي؟
+* هل القنوات آمنة الآن؟
+
+2. Security Fixes
+
+جدول:
+
+Issue
+Before
+After
+Files Changed
+Test Coverage
+
+3. Channel Status
+
+Channel
+Webhook Verification
+Inbound
+Outbound
+OAuth
+Production Ready
+Notes
+
+4. RBAC Status
+
+Route
+Permission Required
+Roles Allowed
+Status
+
+5. Super Admin Status
+
+* هل تم إضافة isSuperAdmin؟
+* كيف يتم إنشاء أول super admin؟
+* هل tenant admin ممنوع من /admin؟
+
+6. Tests
+
+* عدد الاختبارات الجديدة.
+* الاختبارات الناجحة.
+* الاختبارات الفاشلة إن وجدت.
+* سبب أي test لم يتم تنفيذه.
+
+7. Risks Remaining
+
+اذكر المخاطر المتبقية بصراحة.
+
+8. Readiness For Day 3
+
+هل يمكن الانتقال إلى:
+
+* Facebook sendMessage.
+* Meta OAuth.
+* Knowledge async training.
+
+⸻
+
+Commands To Run
+
+بعد التنفيذ شغّل أوامر المشروع المناسبة بعد فحص package.json.
+
+مثال:
+
+npm run lint
+npm run typecheck
+npm test
+npm run build
+
+لو بعض الأوامر غير موجودة، لا تخترع. اذكر المتاح فعليًا.
+
+⸻
+
+Definition of Done
+
+Day 2 لا يعتبر مكتملًا إلا إذا:
+
+* WhatsApp webhook verification لا يرجع true عشوائيًا.
+* Facebook webhook verification لا يرجع true عشوائيًا.
+* Super Admin يعتمد على isSuperAdmin.
+* tenant admin لا يستطيع دخول super admin.
+* RBAC مطبق على routes الحرجة.
+* unsafe channel fallback غير فعال في production.
+* WhatsApp sendMessage حقيقي أو يفشل بوضوح بدون fake success.
+* Facebook fake success ممنوع.
+* tests مضافة.
+* docs محدثة.
+* DAY2_FIN

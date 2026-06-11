@@ -9,7 +9,7 @@ export function SignOutButton() {
   return (
     <button className="btn-secondary" onClick={() => signOut({ callbackUrl: "/login" })}>
       <LogOut size={17} />
-      {t.common.signOut}
+      <span className="hidden sm:inline">{t.common.signOut}</span>
     </button>
   );
 }

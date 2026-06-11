@@ -1,0 +1,3 @@
+- [Schema.Types TS error](schema-types-ts-error.md) — Schema.Types.ObjectId fails tsc but works at runtime; pre-existing in all models.
+- [Channel unique index pattern](channel-index-pattern.md) — Use sparse unique per-provider-field, not compound (tenantId+botId+type).
+- [Auth pattern in API routes](auth-api-pattern.md) — Use requireAuth() from @/server/auth/guards; cast session as `any` for .user.tenantId.

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Save } from "lucide-react";
+import { useI18n } from "@/components/i18n-provider";
 
 type BotFormProps = {
   bot?: {
@@ -14,8 +15,31 @@ type BotFormProps = {
   };
 };
 
+const copy = {
+  ar: {
+    saveError: "تعذر حفظ البوت.",
+    name: "اسم البوت",
+    avatar: "رابط الصورة",
+    description: "الوصف",
+    active: "مفعّل",
+    saving: "جاري الحفظ...",
+    save: "حفظ"
+  },
+  en: {
+    saveError: "Unable to save bot.",
+    name: "Bot name",
+    avatar: "Avatar URL",
+    description: "Description",
+    active: "Active",
+    saving: "Saving...",
+    save: "Save"
+  }
+} as const;
+
 export function BotForm({ bot }: BotFormProps) {
   const router = useRouter();
+  const { locale } = useI18n();
+  const labels = copy[locale];
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -40,7 +64,7 @@ export function BotForm({ bot }: BotFormProps) {
     setLoading(false);
     if (!response.ok) {
       const data = await response.json();
-      setError(data.error || "تعذر حفظ البوت.");
+      setError(data.error || labels.saveError);
       return;
     }
 
@@ -50,26 +74,26 @@ export function BotForm({ bot }: BotFormProps) {
 
   return (
     <form onSubmit={onSubmit} className="panel max-w-3xl p-5">
-      {error ? <p className="mb-4 rounded-md bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
+      {error ? <p className="callout-error mb-4">{error}</p> : null}
       <div className="grid gap-4 md:grid-cols-2">
         <div>
-          <label className="label" htmlFor="name">اسم البوت</label>
+          <label className="label" htmlFor="name">{labels.name}</label>
           <input className="field" id="name" name="name" defaultValue={bot?.name} required />
         </div>
         <div>
-          <label className="label" htmlFor="avatar">رابط الصورة</label>
+          <label className="label" htmlFor="avatar">{labels.avatar}</label>
           <input className="field" id="avatar" name="avatar" defaultValue={bot?.avatar} />
         </div>
       </div>
-      <label className="label mt-4" htmlFor="description">الوصف</label>
+      <label className="label mt-4" htmlFor="description">{labels.description}</label>
       <textarea className="field min-h-28" id="description" name="description" defaultValue={bot?.description} />
-      <label className="mt-4 flex items-center gap-2 text-sm font-medium text-slate-700">
+      <label className="mt-4 flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
         <input name="isActive" type="checkbox" defaultChecked={bot?.isActive ?? true} />
-        مفعل
+        {labels.active}
       </label>
       <button className="btn-primary mt-5" disabled={loading}>
         <Save size={18} />
-        {loading ? "جاري الحفظ..." : "حفظ"}
+        {loading ? labels.saving : labels.save}
       </button>
     </form>
   );

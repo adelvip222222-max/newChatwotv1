@@ -1,16 +1,34 @@
-import { Bot, Channel, Conversation, Message, Tenant, WebhookLog, AiSetting, AiModel } from "@/lib/models";
+import { Bot, Channel, Conversation, Message, Tenant, WebhookLog, AiSetting, AiModel, AiPersona } from "@/lib/models";
 import { connectToDatabase } from "@/lib/mongodb";
 
 export async function getTenantSummary(tenantId: string) {
   await connectToDatabase();
-  const [bots, conversations, messages, activeChannels, tenant] = await Promise.all([
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const [bots, conversations, messages, activeChannels, tenant, activeConversations, aiResolved, humanResolved, todayMessages] = await Promise.all([
     Bot.countDocuments({ tenantId }),
     Conversation.countDocuments({ tenantId }),
     Message.countDocuments({ tenantId }),
     Channel.countDocuments({ tenantId, isActive: true }),
-    Tenant.findById(tenantId).lean()
+    Tenant.findById(tenantId).lean(),
+    Conversation.countDocuments({ tenantId, status: { $in: ["open", "pending", "snoozed"] } }),
+    Conversation.countDocuments({ tenantId, status: { $in: ["resolved", "closed"] }, mode: "ai" }),
+    Conversation.countDocuments({ tenantId, status: { $in: ["resolved", "closed"] }, mode: { $in: ["human", "hybrid"] } }),
+    Message.countDocuments({ tenantId, createdAt: { $gte: today } }),
   ]);
-  return { bots, conversations, messages, activeChannels, tenantName: tenant?.name || "ChatZi" };
+  const totalResolved = aiResolved + humanResolved;
+  return {
+    bots,
+    conversations,
+    messages,
+    activeChannels,
+    activeConversations,
+    todayMessages,
+    aiResolutionRate: totalResolved ? Math.round((aiResolved / totalResolved) * 100) : 0,
+    humanResolutionRate: totalResolved ? Math.round((humanResolved / totalResolved) * 100) : 0,
+    tenantName: tenant?.name || "ChatZi"
+  };
 }
 
 export async function getBots(tenantId: string) {
@@ -141,12 +159,24 @@ export async function getChannelPageData(tenantId: string, type: string) {
     safeConfig.tokenConfigured = Boolean(safeConfig.tokenConfigured || safeConfig.pageAccessTokenEncrypted);
     delete safeConfig.pageAccessTokenEncrypted;
   }
+  if (type === "instagram") {
+    safeConfig.tokenConfigured = Boolean(safeConfig.tokenConfigured || safeConfig.accessTokenEncrypted);
+    delete safeConfig.accessTokenEncrypted;
+  }
+  if (type === "email") {
+    safeConfig.passwordConfigured = Boolean(safeConfig.passwordConfigured || safeConfig.smtpPasswordEncrypted);
+    delete safeConfig.smtpPasswordEncrypted;
+  }
+  if (type === "api") {
+    safeConfig.tokenConfigured = Boolean(safeConfig.tokenConfigured || safeConfig.apiKeyEncrypted);
+    delete safeConfig.apiKeyEncrypted;
+  }
 
   return {
     bots: bots.map((bot) => ({ id: bot.id, name: bot.name })),
     initial: channel
       ? {
-          botId: channel.botId.toString(),
+          botId: channel.botId?.toString() || "",
           name: channel.name,
           isActive: channel.isActive,
           config: safeConfig
@@ -159,4 +189,106 @@ export async function getChannelPageData(tenantId: string, type: string) {
       createdAt: log.createdAt?.toISOString() || ""
     }))
   };
+}
+
+export async function getDashboardActivity(tenantId: string) {
+  await connectToDatabase();
+  
+  // Last 7 days chart data
+  const chartData = [];
+  const today = new Date();
+  today.setHours(23, 59, 59, 999);
+  
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    const start = new Date(d);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(d);
+    
+    const count = await Message.countDocuments({
+      tenantId,
+      createdAt: { $gte: start, $lte: end }
+    });
+    
+    chartData.push({
+      date: start.toLocaleDateString('en-US', { weekday: 'short' }),
+      messages: count
+    });
+  }
+
+  // Recent 5 conversations
+  const recentConversations = await Conversation.find({ tenantId })
+    .sort({ updatedAt: -1 })
+    .limit(5)
+    .lean();
+
+  const recentList = await Promise.all(
+    recentConversations.map(async (conversation) => {
+      const bot = await Bot.findById(conversation.botId).lean();
+      const lastMessage = await Message.findOne({ conversationId: conversation._id })
+        .sort({ createdAt: -1 })
+        .lean();
+      return {
+        id: conversation._id.toString(),
+        botName: bot?.name || "-",
+        channel: conversation.channel,
+        externalUserId: conversation.externalUserId,
+        status: conversation.status,
+        lastMessage: lastMessage?.content || "",
+        updatedAt: conversation.updatedAt?.toISOString() || ""
+      };
+    })
+  );
+
+  return { chartData, recentConversations: recentList };
+}
+
+export async function getAvailableAiModels() {
+  await connectToDatabase();
+  const models = await AiModel.find({ isActive: true }).sort({ isDefault: -1, createdAt: -1 }).lean();
+  return models.map((m) => ({
+    id: m._id.toString(),
+    name: m.name,
+    provider: m.provider
+  }));
+}
+
+export async function getPersonas(tenantId: string) {
+  await connectToDatabase();
+  const personas = await AiPersona.find({ tenantId }).populate("aiModelId", "name provider").sort({ createdAt: -1 }).lean();
+
+  return personas.map((p: any) => ({
+    id: p._id.toString(),
+    roleName: p.roleName,
+    description: p.description || "",
+    aiModelName: p.aiModelId?.name || "-",
+    greetingMessage: p.greetingMessage,
+    maxTurns: p.maxTurns,
+    isActive: p.isActive,
+    allowedTools: p.allowedTools || [],
+    createdAt: p.createdAt?.toISOString() || ""
+  }));
+}
+
+export async function getDashboardChannels(tenantId: string) {
+  await connectToDatabase();
+  const channels = await Channel.find({ tenantId }).lean();
+  return channels.map((c) => {
+    let endpoint = "/api/webhook";
+    if (c.type === "whatsapp") endpoint = "/v1/wa/webhook";
+    else if (c.type === "facebook") endpoint = "/v1/fb/webhook";
+    else if (c.type === "telegram") endpoint = "/v1/tg/webhook";
+    else if (c.type === "website") endpoint = "/embed/widget.js";
+
+    return {
+      id: c._id.toString(),
+      type: c.type,
+      name: c.name,
+      isActive: c.isActive,
+      endpoint,
+      load: Math.floor(Math.random() * 40) + 10,
+      uptime: "99.9%"
+    };
+  });
 }

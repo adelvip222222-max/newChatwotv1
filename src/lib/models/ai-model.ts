@@ -2,7 +2,7 @@ import { Schema, models, model, type InferSchemaType, type Model } from "mongoos
 
 const aiModelSchema = new Schema(
   {
-    tenantId: { type: Schema.Types.ObjectId, ref: "Tenant", required: true, index: true },
+    tenantId: { type: Schema.Types.ObjectId, ref: "Tenant", required: false, index: true },
     name: { type: String, required: true, trim: true },
     provider: { type: String, enum: ["openai", "openai-compatible", "google-gemini"], default: "openai" },
     model: { type: String, required: true, trim: true },

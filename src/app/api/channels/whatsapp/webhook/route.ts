@@ -1,90 +1,57 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { Channel } from "@/lib/models";
 import { connectToDatabase } from "@/lib/mongodb";
-import {
-  createChannelReply,
-  findActiveChannel,
-  logWebhook,
-  sendWhatsappMessage
-} from "@/lib/channel-service";
-import { decryptSecret } from "@/lib/crypto";
+import { safeJsonError } from "@/lib/api-security";
+import { enqueueInboundWebhook } from "@/server/channels/webhookIngress";
 
-type WhatsAppPayload = {
-  entry?: Array<{
-    changes?: Array<{
-      value?: {
-        metadata?: { phone_number_id?: string };
-        messages?: Array<{
-          from?: string;
-          id?: string;
-          text?: { body?: string };
-          type?: string;
-        }>;
-      };
-    }>;
-  }>;
-};
-
-export async function GET(request: Request) {
-  await connectToDatabase();
+export async function GET(request: NextRequest) {
   const url = new URL(request.url);
   const mode = url.searchParams.get("hub.mode");
   const token = url.searchParams.get("hub.verify_token");
   const challenge = url.searchParams.get("hub.challenge");
 
-  if (!token || !challenge || mode !== "subscribe") {
-    return NextResponse.json({ error: "فشل التحقق من WhatsApp." }, { status: 403 });
+  if (mode !== "subscribe" || !token || !challenge) {
+    return new NextResponse("Bad Request", { status: 400 });
   }
 
-  const channel = await findActiveChannel("whatsapp", { "config.verifyToken": token });
-  if (!channel) return NextResponse.json({ error: "Verify token غير مطابق لأي مستأجر." }, { status: 403 });
-  return new Response(challenge);
+  await connectToDatabase();
+  const channel = await Channel.findOne({
+    type: "whatsapp",
+    "config.verifyToken": token,
+    isActive: true
+  });
+
+  if (!channel && token !== process.env.WHATSAPP_VERIFY_TOKEN) {
+    return new NextResponse("Forbidden", { status: 403 });
+  }
+
+  return new NextResponse(challenge, { status: 200 });
 }
 
-export async function POST(request: Request) {
-  const payload = (await request.json()) as WhatsAppPayload;
-  let tenantId: string | undefined;
-  let botId: string | undefined;
-
+export async function POST(request: NextRequest) {
   try {
-    await connectToDatabase();
-    const value = payload.entry?.[0]?.changes?.[0]?.value;
-    const phoneNumberId = value?.metadata?.phone_number_id;
-    const channel = phoneNumberId
-      ? await findActiveChannel("whatsapp", { "config.phoneNumberId": phoneNumberId })
-      : await findActiveChannel("whatsapp");
-    if (!channel) throw new Error("لا توجد قناة WhatsApp مفعلة لهذا المستأجر.");
-
-    tenantId = channel.tenantId.toString();
-    botId = channel.botId.toString();
-    const config = (channel.config || {}) as Record<string, unknown>;
-    const accessToken = decryptSecret(String(config.accessTokenEncrypted || "")) || process.env.WHATSAPP_TOKEN || "";
-    const senderPhoneNumberId = String(config.phoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID || "");
-    await logWebhook({ channel: "whatsapp", payload, tenantId, botId });
-
-    const message = value?.messages?.[0];
-    const text = message?.text?.body;
-    const from = message?.from;
-    if (!from || !text) {
-      return NextResponse.json({ ok: true, ignored: true });
+    const rawBody = await request.text();
+    let payload: unknown;
+    try {
+      payload = JSON.parse(rawBody);
+    } catch {
+      return new NextResponse("Bad Request", { status: 400 });
     }
 
-    const result = await createChannelReply({
-      type: "whatsapp",
-      tenantId,
-      botId,
-      externalUserId: from,
-      message: text,
-      metadata: payload
+    const result = await enqueueInboundWebhook({
+      provider: "whatsapp",
+      request,
+      payload,
+      rawBody
     });
 
-    await sendWhatsappMessage(from, result.reply, accessToken, senderPhoneNumberId);
-    await logWebhook({ channel: "whatsapp", payload, status: "success", tenantId, botId });
-    return NextResponse.json({ ok: true });
+    if (!result.ok) {
+      const status = result.status || 400;
+      return new NextResponse(result.error || "Bad Request", { status });
+    }
+
+    return new NextResponse("EVENT_RECEIVED", { status: 200 });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "WhatsApp webhook error";
-    await logWebhook({ channel: "whatsapp", payload, status: "error", error: message, tenantId, botId }).catch(
-      () => null
-    );
-    return NextResponse.json({ error: message }, { status: 400 });
+    return safeJsonError(error, "Webhook processing failed.", 400);
   }
 }

@@ -1,0 +1,497 @@
+DAY 4 — Instagram Adapter, AI Reliability, Realtime Scaling, and Quota Hardening
+
+أنت تعمل على مشروع newChatwotv1.
+
+Day 1 أنشأ الـ Architecture.
+Day 2 أغلق أهم ثغرات Webhooks و Super Admin وبدأ Channel Security.
+Day 3 أصلح Meta OAuth بالكامل، نفذ Facebook sendMessage الحقيقي، نقل Knowledge Training إلى BullMQ، وأصلح embedding dimension mismatch.
+
+هدف Day 4 هو:
+
+1. إكمال Instagram adapter بشكل حقيقي.
+2. إصلاح AI quota race condition.
+3. تحسين AI context window ليكون token-aware.
+4. جعل Realtime inbox scalable عبر Redis Pub/Sub بدل in-memory فقط.
+5. تنظيف AI provider resolution إن أمكن.
+6. تجهيز AI lead/ticket extraction كأساس لـ Day 5.
+
+⸻
+
+قواعد ملزمة
+
+ممنوع:
+
+* أي fake success في adapters.
+* إرسال أو تسجيل tokens.
+* bypass للـ RBAC.
+* تشغيل long-running work داخل HTTP request.
+* كسر Facebook/WhatsApp الذي تم إصلاحه.
+* إدخال تغييرات ضخمة غير ضرورية.
+
+مطلوب:
+
+* Clean Code.
+* tenant isolation.
+* typed provider adapters.
+* safe error handling.
+* tests.
+* docs.
+* final report.
+
+⸻
+
+Task 4.1 — Complete Instagram Adapter
+
+الهدف
+
+Instagram Messaging يجب أن يعمل عبر Meta Graph API بنفس abstraction الخاص بالقنوات.
+
+المطلوب
+
+أنشئ أو أكمل:
+
+src/server/channels/providers/instagram.ts
+
+يجب أن يدعم
+
+Webhook Verification
+
+* استخدم نفس HMAC-SHA256 pattern الخاص بـ Meta:
+
+X-Hub-Signature-256
+
+* استخدم per-channel appSecret أو fallback آمن من env.
+* لا تستخدم return true.
+
+Normalize Incoming
+
+ادعم Instagram DM payloads من Meta Webhooks:
+
+entry[].messaging[]
+
+واستخرج:
+
+externalEventId
+externalMessageId
+externalUserId
+text
+attachments
+timestamp
+customer profile if available
+
+Send Message
+
+استخدم Meta Graph API:
+
+POST https://graph.facebook.com/v18.0/me/messages
+Authorization: Bearer {PAGE_ACCESS_TOKEN}
+
+Payload MVP:
+
+{
+  "recipient": { "id": "IG_SCOPED_USER_ID" },
+  "message": { "text": "message text" }
+}
+
+Error Handling
+
+تعامل مع:
+
+* invalid token
+* permissions missing
+* recipient not reachable
+* outside messaging window
+* rate limit
+* unsupported attachment
+* app review required
+
+Channel Config
+
+Instagram channel يجب أن يستخدم:
+
+instagramBusinessId
+linkedPageId
+username
+pageAccessTokenEncrypted
+appSecretEncrypted or appSecret reference
+verifyToken
+permissions
+
+ممنوع
+
+* تخزين token plaintext.
+* طباعة token.
+* fake success.
+
+⸻
+
+Task 4.2 — Complete Instagram Connection UI Polish
+
+الهدف
+
+واجهة Meta التي تم عملها في Day 3 يجب أن تعرض Instagram بوضوح.
+
+المطلوب
+
+في:
+
+/dashboard/channels/meta-connect
+/dashboard/channels
+
+أو مكان واجهة القنوات الحالي:
+
+* اعرض Facebook Pages.
+* اعرض Instagram Business Accounts المرتبطة بالصفحات.
+* حالة كل item:
+    * connected
+    * needs_permissions
+    * webhook_subscription_failed
+    * unsupported
+    * connectable
+* اربط Instagram كـ Channel مستقل.
+* لا تعرض tokens.
+* لا تعرض page tokens.
+* أضف رسائل واضحة عند نقص permissions.
+
+⸻
+
+Task 4.3 — Fix AI Quota Race Condition
+
+المشكلة
+
+Day 1 اكتشف أن:
+
+assertCanSendAiMessage()
+ثم
+recordAiMessageUsage()
+
+يمكن أن يحدث بينهما race condition مع أكثر من worker.
+
+المطلوب
+
+أنشئ أو حسّن:
+
+src/lib/quota.ts
+
+باستخدام Redis atomic operations.
+
+السلوك المطلوب
+
+* مفتاح شهري:
+
+quota:ai_messages:{tenantId}:{YYYY-MM}
+
+* قبل إرسال AI reply:
+
+INCR
+إذا تجاوز limit → rollback/decrement أو reject safely
+
+* استخدم Lua script أو multi/transaction إذا لزم.
+* TTL حتى نهاية billing period أو نهاية الشهر.
+* sync دوري إلى MongoDB TenantSubscription.usedMessages.
+
+قواعد
+
+* لا تجعل counters تعتمد على read ثم write.
+* لا تسمح بتجاوز limit تحت concurrency.
+* إذا Redis down:
+    * fail closed للخطة المجانية/المحدودة.
+    * أو fallback آمن مع logging واضح حسب قرارك.
+* وثّق القرار.
+
+⸻
+
+Task 4.4 — Make AI Context Token-Aware
+
+المشكلة
+
+AI context يعتمد على آخر 10 رسائل فقط بدون token budget.
+
+المطلوب
+
+بدل:
+
+last 10 messages
+
+استخدم:
+
+recent messages until token budget reached
+
+المتطلبات
+
+* استخدم estimateTokens() إن موجود.
+* احسب budget لـ:
+    * system prompt
+    * agent role prompt
+    * knowledge context
+    * conversation context
+    * tool instructions
+* لا تتجاوز model context limit.
+* default budget آمن مثل:
+    * 4000 tokens للموديلات الصغيرة.
+    * configurable لكل model/provider إن متاح.
+* لو المحادثة طويلة:
+    * استخدم summary إن موجود.
+    * أو أضف placeholder واضح لـ future summarization.
+
+مخرجات
+
+* جودة الرد أفضل.
+* أخطاء context length تقل.
+* لا تكسر ai-agent.service.
+
+⸻
+
+Task 4.5 — SSE Realtime Scaling via Redis Pub/Sub
+
+المشكلة
+
+Realtime inbox يستخدم in-memory EventEmitter، وهذا لا يعمل مع multi-pod أو horizontal scaling.
+
+المطلوب
+
+أنشئ:
+
+src/lib/realtime.ts
+
+أو حسّن الموجود.
+
+السلوك المطلوب
+
+* Publish events إلى Redis channel:
+
+inbox:{tenantId}:events
+
+* SSE endpoint يشترك في نفس channel.
+* عند:
+    * new message
+    * conversation updated
+    * assignment changed
+    * delivery status changed
+        يتم publish للـ tenant channel.
+
+قواعد
+
+* tenant isolation في channel name.
+* لا ترسل أحداث tenant إلى tenant آخر.
+* حافظ على fallback dev لو Redis غير متاح، لكن واضح ومحدود.
+* لا تكسر SSE API الحالي.
+
+⸻
+
+Task 4.6 — AI Provider Resolution Cleanup
+
+المشكلة
+
+يوجد:
+
+AiProvider
+AiModel
+
+وهما يسببان dual path.
+
+المطلوب
+
+افحص بعناية قبل التعديل.
+
+لو ممكن في Day 4:
+
+* اجعل AiProvider هو المصدر الأساسي.
+* اترك AiModel legacy read-only fallback فقط.
+* لا تكسر tenants الموجودين.
+* أضف migration script أو compatibility layer.
+* وثّق القرار.
+
+لو التعديل كبير:
+
+* لا تنفذه جزئيًا بشكل خطر.
+* اكتب تقرير واضح وخطة Day 5/6.
+
+⸻
+
+Task 4.7 — Prepare Lead/Ticket Extraction Foundation
+
+الهدف
+
+Day 5 سيبني Lead/Ticket models.
+اليوم جهّز AI tools بدون كسر النظام.
+
+المطلوب
+
+راجع:
+
+src/lib/ai/tools-registry.ts
+
+أضف أو حضّر tools:
+
+save_lead_data
+create_ticket
+update_contact_profile
+
+لو save_extracted_data موجود بالفعل:
+
+* لا تكرره.
+* وسّعه بطريقة clean.
+* اجعل التنفيذ idempotent.
+
+قواعد
+
+* لا تنشئ Lead model اليوم إلا لو سهل وآمن.
+* الهدف تجهيز interface و contracts لـ Day 5.
+* لا تحفظ بيانات حساسة بلا داعي.
+* اربط أي extracted data بـ:
+    * tenantId
+    * contactId
+    * conversationId
+
+⸻
+
+Task 4.8 — Tests Required
+
+أضف أو حدّث tests لـ:
+
+Instagram Adapter
+
+* valid HMAC accepted.
+* invalid HMAC rejected.
+* normalize incoming DM.
+* send text message success.
+* invalid token error.
+* missing permission error.
+* no token in logs.
+
+AI Quota
+
+* atomic increment under concurrency.
+* quota exceeded blocks AI send.
+* no over-serving under parallel jobs.
+* Redis failure behavior documented/tested.
+
+AI Context
+
+* respects token budget.
+* includes recent messages within limit.
+* does not exceed context limit.
+* handles long messages.
+
+Realtime
+
+* publish event to tenant channel.
+* SSE receives event.
+* events are tenant-isolated.
+
+AI Tools
+
+* save_lead_data tool stores/updates extracted data idempotently.
+* create_ticket placeholder/contract behaves safely if model missing.
+
+⸻
+
+Task 4.9 — Documentation
+
+أنشئ أو حدّث:
+
+docs/reports/DAY4_FINAL_REPORT.md
+docs/architecture/INSTAGRAM_ADAPTER.md
+docs/architecture/AI_QUOTA_AND_CONTEXT.md
+docs/architecture/REALTIME_SCALING.md
+docs/architecture/AI_TOOLS_LEAD_TICKET_FOUNDATION.md
+
+⸻
+
+Day 4 Final Report Required
+
+أنشئ:
+
+docs/reports/DAY4_FINAL_REPORT.md
+
+ويحتوي على:
+
+1. Summary
+
+* ماذا تم؟
+* ماذا لم يتم؟
+* هل Instagram أصبح usable؟
+* هل AI quota أصبح آمنًا؟
+
+2. Instagram Status
+
+Webhook Verification
+Inbound
+Outbound
+OAuth/Connection
+UI
+Production Ready
+Notes
+
+3. AI Reliability Status
+
+Quota Atomicity
+Context Window
+Provider Resolution
+Lead/Ticket Tools
+Remaining Risk
+
+4. Realtime Status
+
+Before
+After
+Redis Pub/Sub
+Fallback
+Multi-pod Ready
+
+5. Tests
+
+* عدد الاختبارات الجديدة.
+* الاختبارات الناجحة.
+* الفاشلة إن وجدت.
+* لماذا لم تنفذ أي test مطلوب.
+
+6. Risks Remaining
+
+اذكر خصوصًا:
+
+* Instagram App Review/permissions.
+* Meta messaging window.
+* Redis availability.
+* AI provider migration.
+* Lead/Ticket model pending for Day 5.
+
+7. Readiness for Day 5
+
+هل يمكن الانتقال إلى:
+
+* Qdrant integration.
+* Lead model.
+* Ticket model.
+* Entitlement model.
+
+⸻
+
+Commands To Run
+
+افحص package.json وشغل الأوامر المتاحة فقط:
+
+npm run lint
+npm run typecheck
+npm test
+npm run build
+
+إذا أمر غير موجود، اذكر ذلك في التقرير.
+
+⸻
+
+Definition of Done
+
+Day 4 لا يعتبر مكتملًا إلا إذا:
+
+* Instagram adapter لا يحتوي fake success.
+* Instagram webhook verification آمن.
+* Instagram inbound/outbound MVP موجود.
+* AI quota atomic أو على الأقل محمي بوضوح.
+* AI context token-aware.
+* SSE لم يعد يعتمد فقط على in-memory في production.
+* lead/ticket tools contracts جاهزة.
+* tests مضافة.
+* docs محدثة.
+* DAY4_FINAL_R

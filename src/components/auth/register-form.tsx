@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useEffect, useState, useRef } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { UserPlus, Upload, FileSpreadsheet, Download, CheckCircle2, Loader2, ArrowLeft, Store, Stethoscope, Building2, TerminalSquare, Lightbulb, Globe, AlignLeft, Briefcase, Mic, X } from "lucide-react";
@@ -18,10 +18,13 @@ const INDUSTRIES: { id: Industry; icon: React.ReactNode; template?: string }[] =
 
 export function RegisterForm() {
   const router = useRouter();
-  const [step, setStep] = useState<1 | 2>(1);
+  const [step, setStep] = useState<1 | 2 | 3>(1);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [botId, setBotId] = useState("");
+  const [googleEnabled, setGoogleEnabled] = useState(false);
+  const [agreedTerms, setAgreedTerms] = useState(false);
+  const [agreedPrivacy, setAgreedPrivacy] = useState(false);
   const { t, locale, setLocale } = useI18n();
 
   // Step 2 State
@@ -31,7 +34,28 @@ export function RegisterForm() {
   const [companyProfile, setCompanyProfile] = useState("");
   const [servicesDesc, setServicesDesc] = useState("");
   
+  // Step 3 State
+  const [phoneNumber, setPhoneNumber] = useState("");
+  const [emailCode, setEmailCode] = useState("");
+  const [phoneCode, setPhoneCode] = useState("");
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    fetch("/api/auth/providers")
+      .then((response) => response.json())
+      .then((providers) => setGoogleEnabled(Boolean(providers?.google)))
+      .catch(() => setGoogleEnabled(false));
+  }, []);
+
+  function formatRegisterError(message: string) {
+    if (/password/i.test(message) && /12/.test(message)) {
+      return locale === "ar"
+        ? "كلمة المرور يجب أن تكون 12 حرفا على الأقل وتحتوي على حرف كبير وحرف صغير ورقم."
+        : "Password must be at least 12 characters and include uppercase, lowercase, and a number.";
+    }
+    return message;
+  }
 
   async function onRegisterSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -55,7 +79,7 @@ export function RegisterForm() {
       const data = await response.json();
       
       if (!response.ok) {
-        setError(data.error || t.errors.serverError);
+        setError(formatRegisterError(data.error || t.errors.serverError));
         setLoading(false);
         return;
       }
@@ -129,8 +153,7 @@ export function RegisterForm() {
         await postData(fd);
       }
 
-      router.push("/dashboard");
-      router.refresh();
+      setStep(3);
     } catch (err) {
       setError(err instanceof Error ? err.message : t.auth.uploadError);
       setLoading(false);
@@ -138,14 +161,92 @@ export function RegisterForm() {
   }
 
   function handleSkip() {
+    setStep(3);
+  }
+
+  function handleFinish() {
+    // Here we would typically verify the codes, for now we proceed
     router.push("/dashboard");
     router.refresh();
   }
 
-  if (step === 2) {
-    const selectedObj = INDUSTRIES.find(i => i.id === industry);
-    
-    return (
+  const renderStep = () => {
+    if (step === 3) {
+      return (
+      <div className="panel w-full max-w-lg p-6 md:p-8">
+        <div className="mb-6 text-center">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-primary-100 text-primary-600 shadow-sm ring-4 ring-primary-50">
+            <CheckCircle2 size={24} />
+          </div>
+          <h1 className="text-2xl font-bold text-ink">{t.auth.step3Title}</h1>
+          <p className="mt-2 text-sm text-accent leading-relaxed">
+            {t.auth.step3Subtitle}
+          </p>
+        </div>
+
+        <div className="space-y-4">
+          <div>
+            <label className="label">{t.auth.phoneLabel}</label>
+            <input 
+              type="tel"
+              className="field" 
+              placeholder="+201234567890"
+              value={phoneNumber}
+              onChange={(e) => setPhoneNumber(e.target.value)}
+            />
+          </div>
+          
+          <div>
+            <label className="label">{t.auth.emailCodeLabel}</label>
+            <input 
+              type="text"
+              className="field" 
+              placeholder="123456"
+              value={emailCode}
+              onChange={(e) => setEmailCode(e.target.value)}
+            />
+          </div>
+
+          <div>
+            <label className="label">{t.auth.phoneCodeLabel}</label>
+            <input 
+              type="text"
+              className="field" 
+              placeholder="123456"
+              value={phoneCode}
+              onChange={(e) => setPhoneCode(e.target.value)}
+            />
+          </div>
+        </div>
+
+        <div className="mt-6 flex flex-col gap-3">
+          <button 
+            onClick={handleFinish} 
+            className="btn-primary w-full"
+          >
+            <CheckCircle2 size={18} />
+            {t.auth.finishButton}
+          </button>
+          
+          <button 
+            onClick={() => {
+              router.push("/dashboard");
+              router.refresh();
+            }}
+            className="flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition"
+          >
+            {t.auth.skipVerification}
+            <ArrowLeft size={16} className="rtl:rotate-0 rotate-180" />
+          </button>
+        </div>
+      </div>
+      );
+    }
+
+    if (step === 2) {
+      const selectedObj = INDUSTRIES.find(i => i.id === industry);
+      
+      return (
       <div className="panel w-full max-w-2xl p-6 md:p-8">
         <div className="mb-6 text-center">
           <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-primary-100 text-primary-600 shadow-sm ring-4 ring-primary-50">
@@ -304,50 +405,149 @@ export function RegisterForm() {
           </button>
         </div>
       </div>
+      );
+    }
+
+    return (
+      <form onSubmit={onRegisterSubmit} className="w-full">
+        <div className="flex justify-between items-center mb-8">
+          <h1 className="text-3xl font-bold text-slate-800">{t.auth.registerTitle}</h1>
+          <button
+            type="button"
+            onClick={() => setLocale(locale === "en" ? "ar" : "en")}
+            className="text-xs font-semibold text-accent border border-slate-200 dark:border-slate-800 rounded-md px-2.5 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800 transition"
+          >
+            {locale === "en" ? "العربية" : "English"}
+          </button>
+        </div>
+        {error ? <p className="mb-4 rounded-md bg-red-50 p-3 text-sm text-red-700 border border-red-100">{error}</p> : null}
+
+        {googleEnabled ? (
+          <div className="mb-6">
+            <button
+              type="button"
+              onClick={() => signIn("google", { callbackUrl: "/dashboard" })}
+              className="flex w-full items-center justify-center gap-3 rounded-md border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+            >
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-white font-bold text-[#4285f4]">G</span>
+              {locale === "ar" ? "المتابعة باستخدام Google" : "Continue with Google"}
+            </button>
+            <div className="my-5 flex items-center gap-3">
+              <span className="h-px flex-1 bg-slate-200" />
+              <span className="text-xs font-semibold text-slate-400">{locale === "ar" ? "أو" : "or"}</span>
+              <span className="h-px flex-1 bg-slate-200" />
+            </div>
+          </div>
+        ) : null}
+        
+        <div className="grid gap-6 md:grid-cols-2 mb-6">
+          <div>
+            <label className="block text-xs text-slate-400 font-semibold mb-1" htmlFor="name">{t.auth.nameLabel}</label>
+            <input className="w-full border-b border-slate-200 bg-transparent py-2 text-sm text-slate-800 focus:border-primary-500 focus:outline-none transition-colors" id="name" name="name" placeholder={t.auth.nameLabel} required />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-400 font-semibold mb-1" htmlFor="tenantName">{t.auth.companyLabel}</label>
+            <input className="w-full border-b border-slate-200 bg-transparent py-2 text-sm text-slate-800 focus:border-primary-500 focus:outline-none transition-colors" id="tenantName" name="tenantName" placeholder={t.auth.companyLabel} required />
+          </div>
+          <div className="md:col-span-2">
+            <label className="block text-xs text-slate-400 font-semibold mb-1" htmlFor="email">{t.auth.emailLabel}</label>
+            <input className="w-full border-b border-slate-200 bg-transparent py-2 text-sm text-slate-800 focus:border-primary-500 focus:outline-none transition-colors" id="email" name="email" type="email" placeholder={t.auth.emailLabel} required />
+          </div>
+          <div className="md:col-span-2">
+            <label className="block text-xs text-slate-400 font-semibold mb-1" htmlFor="password">{t.auth.passwordLabel}</label>
+            <input
+              className="w-full border-b border-slate-200 bg-transparent py-2 text-sm text-slate-800 focus:border-primary-500 focus:outline-none transition-colors"
+              id="password"
+              name="password"
+              type="password"
+              placeholder={t.auth.passwordLabel}
+              minLength={12}
+              pattern="(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{12,128}"
+              title={locale === "ar" ? "12 حرفا على الأقل مع حرف كبير وحرف صغير ورقم" : "At least 12 characters with uppercase, lowercase, and a number"}
+              required
+            />
+            <p className="mt-2 text-xs text-slate-400">
+              {locale === "ar" ? "12 حرفا على الأقل مع حرف كبير وحرف صغير ورقم." : "At least 12 characters with uppercase, lowercase, and a number."}
+            </p>
+          </div>
+        </div>
+
+        <div className="mb-8 flex flex-col gap-3">
+          <div className="flex items-start gap-2">
+            <input 
+              type="checkbox" 
+              id="terms" 
+              name="terms" 
+              required 
+              checked={agreedTerms}
+              onChange={(e) => setAgreedTerms(e.target.checked)}
+              className="mt-1 border-slate-300 text-primary-600 focus:ring-primary-500 rounded cursor-pointer" 
+            />
+            <label htmlFor="terms" className="text-xs text-slate-500 cursor-pointer select-none">
+              {locale === "en" ? "I agree to the " : "أوافق على "}
+              <a href="/terms" className="text-slate-800 hover:text-primary-600 hover:underline" target="_blank" onClick={(e) => e.stopPropagation()}>
+                {locale === "en" ? "Terms and Conditions" : "شروط الخدمة"}
+              </a>
+            </label>
+          </div>
+          <div className="flex items-start gap-2">
+            <input 
+              type="checkbox" 
+              id="privacy" 
+              name="privacy" 
+              required 
+              checked={agreedPrivacy}
+              onChange={(e) => setAgreedPrivacy(e.target.checked)}
+              className="mt-1 border-slate-300 text-primary-600 focus:ring-primary-500 rounded cursor-pointer" 
+            />
+            <label htmlFor="privacy" className="text-xs text-slate-500 cursor-pointer select-none">
+              {locale === "en" ? "I agree to the " : "أقر بموافقتي على "}
+              <a href="/privacy" className="text-slate-800 hover:text-primary-600 hover:underline" target="_blank" onClick={(e) => e.stopPropagation()}>
+                {locale === "en" ? "Privacy Policy" : "سياسة الخصوصية"}
+              </a>
+            </label>
+          </div>
+        </div>
+        
+        <button 
+          className="w-full md:w-auto px-10 py-3 rounded-md bg-[#b87cff] text-white font-bold tracking-wide hover:bg-[#a662f5] transition-colors shadow-lg shadow-purple-500/30 disabled:opacity-50 disabled:cursor-not-allowed" 
+          disabled={!agreedTerms || !agreedPrivacy || loading}
+        >
+          {loading ? <Loader2 size={18} className="animate-spin inline mr-2" /> : null}
+          {loading ? t.auth.registering : (locale === "en" ? "Register" : "إنشاء حساب")}
+        </button>
+        
+        <div className="mt-6 text-sm text-slate-500">
+          {locale === "en" ? "Already a member? " : "لديك حساب بالفعل؟ "}
+          <a href="/login" className="text-[#b87cff] hover:underline font-semibold transition">
+            {locale === "en" ? "Login" : "تسجيل الدخول"}
+          </a>
+        </div>
+      </form>
     );
-  }
+  };
 
   return (
-    <form onSubmit={onRegisterSubmit} className="panel w-full max-w-lg p-6">
-      <div className="flex justify-between items-center mb-6">
-        <div>
-          <p className="text-sm font-semibold text-accent">ChatZi</p>
-          <h1 className="mt-2 text-2xl font-bold text-ink">{t.auth.registerTitle}</h1>
+    <div className="theme-rescue relative z-10 flex min-h-[600px] w-full max-w-[1000px] flex-col overflow-hidden rounded-[24px] bg-white shadow-2xl dark:bg-slate-950 sm:rounded-[30px] md:flex-row">
+      {/* Left Panel */}
+      <div className="w-full md:w-5/12 bg-[#31334c] p-10 text-white flex flex-col justify-center relative">
+        <div className="mb-12 flex items-center gap-3">
+          <img src="/images/logo.png" alt="ChatZi Logo" className="h-10" />
         </div>
-        <button
-          type="button"
-          onClick={() => setLocale(locale === "en" ? "ar" : "en")}
-          className="text-xs font-semibold text-accent border border-slate-200 dark:border-slate-800 rounded-md px-2.5 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800 transition"
-        >
-          {locale === "en" ? "العربية" : "English"}
-        </button>
+        <h2 className="text-4xl font-bold mb-6 text-white leading-tight">
+          {locale === "en" ? "Start our journey" : "ابدأ رحلتنا"}
+        </h2>
+        <p className="text-sm text-slate-300 leading-relaxed max-w-sm">
+          {locale === "en" 
+            ? "Join ChatZi today and revolutionize the way you communicate with your customers. Experience the power of omnichannel AI to build better relationships."
+            : "انضم إلى منصة ChatZi اليوم وطوّر طريقة تواصلك مع عملائك لتجربة استثنائية وبناء علاقات أفضل من خلال الذكاء الاصطناعي."}
+        </p>
       </div>
-      {error ? <p className="mb-4 rounded-md bg-red-50 p-3 text-sm text-red-700 border border-red-100">{error}</p> : null}
-      <div className="grid gap-4 md:grid-cols-2">
-        <div>
-          <label className="label" htmlFor="name">{t.auth.nameLabel}</label>
-          <input className="field" id="name" name="name" required />
-        </div>
-        <div>
-          <label className="label" htmlFor="tenantName">{t.auth.companyLabel}</label>
-          <input className="field" id="tenantName" name="tenantName" required />
-        </div>
-        <div>
-          <label className="label" htmlFor="email">{t.auth.emailLabel}</label>
-          <input className="field" id="email" name="email" type="email" required />
-        </div>
-        <div>
-          <label className="label" htmlFor="password">{t.auth.passwordLabel}</label>
-          <input className="field" id="password" name="password" type="password" minLength={8} required />
-        </div>
+      
+      {/* Right Panel */}
+      <div className="w-full md:w-7/12 p-8 md:p-14 flex flex-col justify-center">
+        {renderStep()}
       </div>
-      <button className="btn-primary mt-6 w-full" disabled={loading}>
-        {loading ? <Loader2 size={18} className="animate-spin" /> : <UserPlus size={18} />}
-        {loading ? t.auth.registering : t.auth.registerButton}
-      </button>
-      <a href="/login" className="mt-4 block text-center text-sm font-medium text-accent hover:text-primary-600 transition">
-        {t.auth.alreadyHaveAccount}
-      </a>
-    </form>
+    </div>
   );
 }

@@ -1,7 +1,10 @@
 node_modules/
 .next/
-.env
 .env.local
+.env.*.local
 
 *.log
 *.tsbuildinfo
+backups/
+*.dump
+*.archive

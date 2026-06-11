@@ -63,6 +63,12 @@ const userSchema = new Schema(
       index: true,
     },
 
+    isSuperAdmin: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
     lastLoginAt: {
       type: Date,
       default: null,

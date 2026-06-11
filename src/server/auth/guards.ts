@@ -5,6 +5,22 @@ import { connectToDatabase } from "@/lib/mongodb";
 import { type Permission } from "@/server/permissions/permissions";
 import { isRole, roleHasPermission, type Role } from "@/server/permissions/roles";
 
+export async function requireSuperAdmin() {
+  const session = await getCurrentSession();
+  if (!session?.user?.id) {
+    throw new Error("Authentication is required.");
+  }
+  if (session.user.isSuperAdmin === true) {
+    return session;
+  }
+  await connectToDatabase();
+  const user = await User.findOne({ _id: session.user.id, isActive: true }).lean();
+  if (!(user as any)?.isSuperAdmin) {
+    throw new Error("Super-admin access is required.");
+  }
+  return session;
+}
+
 export async function requireAuth() {
   const session = await getCurrentSession();
   if (!session?.user?.id) {

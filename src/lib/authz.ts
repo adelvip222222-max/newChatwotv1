@@ -1,7 +1,9 @@
+import { connectToDatabase } from "@/lib/mongodb";
+import { User } from "@/lib/models";
 import { requireSession } from "@/lib/auth";
 
 export function isAdminRole(role?: string | null) {
-  return role === "owner" || role === "admin";
+  return role === "admin" || role === "owner";
 }
 
 export async function requireAdmin() {
@@ -12,3 +14,15 @@ export async function requireAdmin() {
   return session;
 }
 
+export async function requirePlatformAdmin() {
+  const session = await requireSession();
+  if (session.user.isSuperAdmin === true) {
+    return session;
+  }
+  await connectToDatabase();
+  const user = await User.findOne({ _id: session.user.id, isActive: true }).lean();
+  if (!(user as any)?.isSuperAdmin) {
+    throw new Error("Platform super-admin access is required.");
+  }
+  return session;
+}

@@ -27,9 +27,9 @@ export const tailwindThemeExtension = {
     info:        colorTokens.info,
     coral:       colorTokens.coral,
     // Named shortcuts preserved from legacy (backward-compat)
-    ink:         colorTokens.neutral[950],
-    paper:       colorTokens.neutral[50],
-    accent:      colorTokens.primary[600],
+    ink:         "var(--color-ink)",
+    paper:       "var(--color-paper)",
+    accent:      "var(--color-accent)",
   },
 
   fontFamily: {

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireAdmin } from "@/lib/authz";
+import { requirePermission } from "@/server/auth/guards";
+import { permissions } from "@/server/permissions/permissions";
 import { AiSetting, Bot } from "@/lib/models";
 import { connectToDatabase } from "@/lib/mongodb";
 import { DEFAULT_SYSTEM_PROMPT } from "@/lib/strings";
@@ -12,7 +13,7 @@ const schema = z.object({
 
 export async function PATCH(request: Request) {
   try {
-    const session = await requireAdmin();
+    const session = await requirePermission(permissions.knowledgeManage);
     const body = schema.parse(await request.json());
     await connectToDatabase();
     const bot = await Bot.findOne({ _id: body.botId, tenantId: session.user.tenantId });

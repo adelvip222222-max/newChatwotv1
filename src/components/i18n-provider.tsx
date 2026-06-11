@@ -32,6 +32,7 @@ export function I18nProvider({ children, initialLocale }: { children: React.Reac
     if (saved && saved !== locale) {
       setLocale(saved);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const t = (locale === "ar" ? ar : en) as unknown as TranslationDict;

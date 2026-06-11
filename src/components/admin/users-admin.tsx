@@ -98,7 +98,7 @@ export function UsersAdmin({
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <Field name="name" label="Name" required />
           <Field name="email" label="Email" type="email" required />
-          <Field name="password" label="Password" type="password" minLength={8} required />
+          <Field name="password" label="Password" type="password" minLength={12} required />
           <div>
             <label className="label">Role</label>
             <select className="field" name="role" defaultValue="agent">

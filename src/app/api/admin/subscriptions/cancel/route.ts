@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireAdmin } from "@/lib/authz";
+import { requireSuperAdmin } from "@/server/auth/guards";
 import { cancelSubscriptionByAdmin } from "@/lib/billing";
 
 const schema = z.object({
@@ -9,7 +9,7 @@ const schema = z.object({
 
 export async function POST(request: Request) {
   try {
-    await requireAdmin();
+    await requireSuperAdmin();
     const body = schema.parse(await request.json());
     
     await cancelSubscriptionByAdmin(body.subscriptionId);

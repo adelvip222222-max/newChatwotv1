@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireAdmin } from "@/lib/authz";
+import { requireSuperAdmin } from "@/server/auth/guards";
 import { encryptSecret } from "@/lib/crypto";
 import { AiModel } from "@/lib/models";
 import { connectToDatabase } from "@/lib/mongodb";
@@ -28,7 +28,7 @@ function normalizeBaseUrl(provider?: string, baseUrl?: string) {
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const session = await requireAdmin();
+    const session = await requireSuperAdmin();
     const { id } = await params;
     const body = schema.parse(await request.json());
     await connectToDatabase();

@@ -5,17 +5,33 @@ import { z } from "zod";
 import { Bot, Tenant, User, BillingPlan, TenantSubscription } from "@/lib/models";
 import { connectToDatabase } from "@/lib/mongodb";
 import { slugifyArabic } from "@/lib/strings";
+import { checkRateLimit, getClientIp, parseJsonBody } from "@/lib/api-security";
 
 const registerSchema = z.object({
   name: z.string().min(2).max(120),
   email: z.string().email().max(180),
-  password: z.string().min(8),
-  tenantName: z.string().min(2)
+  password: z.string().min(12).max(128).regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$/, "Password must include uppercase, lowercase, and a number."),
+  tenantName: z.string().min(2).max(120)
 });
+
+function getRegistrationError(error: unknown) {
+  if (error instanceof z.ZodError) {
+    const passwordIssue = error.issues.find((issue) => issue.path[0] === "password");
+    if (passwordIssue) {
+      return "Password must be at least 12 characters and include uppercase, lowercase, and a number.";
+    }
+
+    const firstIssue = error.issues[0];
+    if (firstIssue) return firstIssue.message;
+  }
+
+  return error instanceof Error ? error.message : "Unable to create account.";
+}
 
 export async function POST(request: Request) {
   try {
-    const body = registerSchema.parse(await request.json());
+    checkRateLimit(`register:${getClientIp(request)}`, { limit: 5, windowMs: 60 * 60_000 });
+    const body = await parseJsonBody(request, registerSchema, { maxBytes: 16 * 1024 });
     await connectToDatabase();
 
     const email = body.email.toLowerCase().trim();
@@ -65,7 +81,8 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ ok: true, userId: user._id.toString(), botId: bot._id.toString() });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to create account.";
+    const message = getRegistrationError(error);
+    console.error("Registration failed:", message);
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }

@@ -1,0 +1,510 @@
+DAY 3 — Facebook Full Send, Meta OAuth, Settings RBAC, and Knowledge Async Training
+
+أنت تعمل على مشروع newChatwotv1.
+
+Day 1 أنشأ الـ Architecture والتقارير.
+Day 2 أغلق أهم ثغرات الأمان:
+
+* WhatsApp/Facebook webhook HMAC.
+* rawBody threading.
+* isSuperAdmin.
+* requireSuperAdmin.
+* RBAC foundation.
+* WhatsApp adapter الحقيقي.
+* منع fake verification.
+* منع unsafe fallback في production.
+
+هدف Day 3 هو نقل النظام خطوة عملية للأمام عبر:
+
+1. إكمال Facebook Messenger outbound send.
+2. إكمال Meta OAuth flow للقنوات:
+    * Facebook Messenger
+    * Instagram
+    * WhatsApp لاحقًا حسب المتاح
+3. إصلاح settings routes لتستخدم RBAC بدل inline role checks.
+4. نقل Knowledge training إلى BullMQ.
+5. إصلاح مشاكل knowledge embeddings الأساسية.
+6. عدم إدخال أي fake success behavior.
+
+⸻
+
+قواعد ملزمة
+
+ممنوع:
+
+* verifyWebhook() { return true }
+* sendMessage() { return { success: true } } بدون إرسال فعلي
+* تمرير access tokens للفرونت
+* logging لأي token أو secret
+* استخدام role checks مباشرة في routes الحساسة بدل requirePermission
+* تشغيل knowledge training synchronously داخل request
+* تجاهل أخطاء Meta API
+
+مطلوب:
+
+* Clean Code
+* typed interfaces
+* small files
+* provider abstraction
+* tenant isolation
+* RBAC
+* encrypted secrets
+* tests
+* documentation
+* final report
+
+⸻
+
+Task 3.1 — Implement Facebook Messenger sendMessage
+
+الهدف
+
+Facebook Messenger outbound يجب أن يكون حقيقيًا وليس stub.
+
+المطلوب
+
+نفذ sendMessage() في:
+
+src/server/channels/providers/facebook.ts
+
+باستخدام Meta Graph API:
+
+POST https://graph.facebook.com/v18.0/me/messages
+Authorization: Bearer {PAGE_ACCESS_TOKEN}
+
+Payload MVP:
+
+{
+  "recipient": { "id": "PSID" },
+  "message": { "text": "message text" },
+  "messaging_type": "RESPONSE"
+}
+
+يجب دعم
+
+* text messages.
+* parsing message_id من Meta response.
+* clear error handling.
+* rate limit handling.
+* invalid token handling.
+* 24h messaging window error handling.
+* لا تطبع page access token في logs.
+
+قواعد
+
+* token يجب أن يكون encrypted at rest ويفك server-side فقط.
+* لو pageAccessToken غير موجود: return failure واضح.
+* لو pageId غير موجود: return failure واضح.
+* لا تستخدم fake success.
+
+⸻
+
+Task 3.2 — Complete Meta OAuth Flow
+
+الهدف
+
+ربط Facebook/Instagram بطريقة OAuth آمنة، server-side، بدون إرسال tokens للفرونت.
+
+راجع الموجود
+
+افحص:
+
+src/app/api/oauth/meta/route.ts
+src/app/dashboard/channels/
+src/lib/models/channel.ts
+src/server/channels/
+src/lib/crypto.ts
+
+OAuth Flow المطلوب
+
+User clicks Connect Meta
+→ server generates signed short-lived state
+→ state includes tenantId + userId + nonce + returnUrl
+→ redirect to Meta OAuth dialog
+→ callback receives code + state
+→ validate state server-side
+→ exchange code for access token server-side
+→ fetch /me/accounts
+→ fetch linked Instagram accounts for pages
+→ show selectable page/account list OR create pending connections
+→ user selects page/IG account
+→ encrypt tokens
+→ create Channel records
+→ subscribe page to webhooks
+→ activate channel
+
+Security Rules
+
+* لا ترجع access token في postMessage.
+* لا تخزن token في localStorage/sessionStorage.
+* لا ترسله للفرونت.
+* token encryption إلزامي.
+* state must expire.
+* state must be single-use if practical.
+* verify tenant ownership.
+* verify user has permission settings.manage or channels.manage.
+
+Channel Records
+
+Facebook channel config يجب أن يشمل:
+
+pageId
+pageName
+pageAccessTokenEncrypted
+appSecretEncrypted or appSecret reference
+verifyToken
+webhookSubscribedAt
+permissions
+
+Instagram channel config يجب أن يشمل:
+
+instagramBusinessId
+username
+linkedPageId
+pageAccessTokenEncrypted
+verifyToken
+webhookSubscribedAt
+permissions
+
+Webhook Subscription
+
+بعد إنشاء channel حاول subscribe للصفحة:
+
+POST /{page-id}/subscribed_apps
+
+مع fields المناسبة:
+
+messages
+messaging_postbacks
+message_deliveries
+message_reads
+
+إذا فشل بسبب permissions/app review:
+
+* لا تفشل النظام كله.
+* اجعل channel status = needs_permissions أو webhook_subscription_failed.
+* اعرض رسالة واضحة في UI.
+* وثّق المطلوب في docs.
+
+⸻
+
+Task 3.3 — Channel Connection UI for Meta OAuth
+
+الهدف
+
+واجهة ربط واضحة.
+
+المطلوب
+
+في dashboard channels:
+
+* زر Connect Facebook / Instagram.
+* callback result page.
+* عرض pages المتاحة.
+* اختيار page وربطها.
+* عرض status:
+    * connected
+    * needs_permissions
+    * webhook_failed
+    * token_expired
+    * disconnected
+* زر reconnect.
+* زر disconnect placeholder إذا لم يكتمل اليوم.
+
+مهم
+
+* لا تعرض access tokens.
+* لا تعرض secrets.
+* i18n support لو النظام يدعم ذلك.
+* loading/error/success states.
+
+⸻
+
+Task 3.4 — Migrate Settings Routes to RBAC
+
+Day 2 وثّق gap:
+
+* /api/settings/tenant
+* /api/settings/ai
+* بعض routes تستخدم inline isAdminRole()
+
+المطلوب
+
+استبدل inline checks بـ:
+
+requirePermission(permissions.settingsManage)
+
+أو permission مناسب من النظام الحالي.
+
+راجع أيضًا
+
+/api/admin/ai-providers
+
+قرار مطلوب:
+
+* إذا كانت global provider config → استخدم requireSuperAdmin
+* إذا كانت tenant provider config → استخدم requirePermission(ai.manage)
+
+وثّق القرار في:
+
+docs/reports/DAY3_RBAC_DECISIONS.md
+
+⸻
+
+Task 3.5 — Move Knowledge Training to BullMQ
+
+المشكلة
+
+Knowledge training يعمل synchronously داخل request ويسبب timeout.
+
+المطلوب
+
+أنشئ queue:
+
+knowledge-training-queue
+
+ملفات متوقعة:
+
+src/lib/queues/index.ts
+workers/knowledge-worker.ts
+src/lib/knowledge.ts
+src/app/api/knowledge/
+
+السلوك الجديد
+
+عند رفع document:
+
+create KnowledgeDocument(status="pending")
+enqueue training job
+return immediately to UI
+worker processes:
+  extract text
+  clean text
+  chunk
+  embed
+  insert chunks
+  update document status="ready"
+
+retrainAllKnowledge
+
+بدل التشغيل المتسلسل:
+
+enqueue one job per document
+batch jobs
+status يظهر processing
+
+Error Handling
+
+* failed job → document.status = “error”
+* store error message safely.
+* retries with backoff.
+* لا تسقط document بصمت.
+
+⸻
+
+Task 3.6 — Add Knowledge Training Progress API
+
+الهدف
+
+الفرونت يعرف حالة التدريب.
+
+endpoint مقترح
+
+GET /api/knowledge/documents/[id]/status
+
+يرجع:
+
+{
+  "status": "pending | processing | ready | error",
+  "chunkCount": 0,
+  "embeddingCount": 0,
+  "error": null
+}
+
+ولو موجود endpoint مشابه، حسّنه بدل إنشاء جديد.
+
+⸻
+
+Task 3.7 — Fix Embedding Dimension Mismatch
+
+المشكلة
+
+OpenAI embeddings = 1536 dimensions
+local hash = 128 dimensions
+الكود يقارن بينهم باستخدام Math.min() وهذا يعطي scores خاطئة.
+
+المطلوب
+
+* أثناء search، استخدم فقط chunks بنفس embeddingProvider ونفس dimensions.
+* إذا query embedding من OpenAI:
+    * ابحث فقط في chunks embeddingProvider = openai
+* إذا query embedding local:
+    * ابحث فقط في chunks embeddingProvider = local-hash
+* لو OpenAI key أضيف لاحقًا:
+    * علّم local-hash chunks كـ needsRetraining=true أو أضف report واضح.
+
+ممنوع
+
+* المقارنة بين vectors بأبعاد مختلفة.
+* تجاهل mismatch بصمت.
+
+⸻
+
+Task 3.8 — Tests Required
+
+أضف أو حدّث tests تغطي:
+
+Facebook Send
+
+* sends text payload to Meta Graph API.
+* handles Meta success response.
+* handles invalid token.
+* handles rate limit.
+* never logs token.
+* returns externalMessageId.
+
+Meta OAuth
+
+* invalid state rejected.
+* expired state rejected.
+* callback exchanges code server-side.
+* token is not returned to frontend.
+* channel records store encrypted tokens.
+* user without permission cannot start OAuth.
+
+Settings RBAC
+
+* viewer cannot edit tenant settings.
+* agent cannot edit AI settings.
+* admin/owner can edit settings.
+* super admin route not confused with tenant admin.
+
+Knowledge Async
+
+* upload returns quickly with pending/processing.
+* worker processes document.
+* failed worker marks document error.
+* retrain enqueues jobs.
+* incompatible embeddings are skipped.
+
+⸻
+
+Task 3.9 — Documentation
+
+أنشئ أو حدّث:
+
+docs/reports/DAY3_FINAL_REPORT.md
+docs/reports/DAY3_RBAC_DECISIONS.md
+docs/architecture/META_OAUTH_FLOW.md
+docs/operations/META_CHANNELS_SETUP.md
+docs/architecture/KNOWLEDGE_ASYNC_TRAINING.md
+
+⸻
+
+Day 3 Final Report Required
+
+أنشئ:
+
+docs/reports/DAY3_FINAL_REPORT.md
+
+ويحتوي على:
+
+1. Summary
+
+* ماذا تم تنفيذه؟
+* ماذا بقي؟
+* ما الذي أصبح Production-ready؟
+
+2. Facebook Status
+
+Webhook Verification
+Inbound
+Outbound
+Delivery Status
+OAuth
+Production Ready
+Notes
+
+3. Meta OAuth Status
+
+State Security
+Token Exchange
+Page Fetching
+Instagram Fetching
+Channel Creation
+Webhook Subscription
+Token Encryption
+UI Status
+
+4. Knowledge Training Status
+
+Upload Flow
+Training Queue
+Worker
+Retries
+Progress API
+Retrain Flow
+Error Handling
+
+5. RBAC Status
+
+Route
+Before
+After
+Permission
+Status
+
+6. Tests
+
+* عدد الاختبارات الجديدة.
+* عدد الاختبارات الناجحة.
+* أي فشل ولماذا.
+
+7. Remaining Risks
+
+اذكر بوضوح:
+
+* أي Meta App Review dependency.
+* أي permission ناقص.
+* أي limitation في Instagram/WhatsApp.
+* أي feature مؤجل لـ Day 4.
+
+8. Readiness for Day 4
+
+هل يمكن الانتقال إلى:
+
+* Instagram full adapter.
+* AI quota race fix.
+* AI context token window.
+* SSE Redis pub/sub.
+
+⸻
+
+Commands To Run
+
+افحص package.json وشغّل الأوامر الفعلية المتاحة مثل:
+
+npm run lint
+npm run typecheck
+npm test
+npm run build
+
+لا تخترع أوامر غير موجودة.
+
+⸻
+
+Definition of Done
+
+Day 3 لا يعتبر مكتملًا إلا إذا:
+
+* Facebook sendMessage حقيقي.
+* Meta OAuth لا يرسل tokens للفرونت.
+* OAuth state آمن.
+* channel records تُنشأ بتوكنات مشفرة.
+* settings routes تستخدم RBAC.
+* knowledge training لا يعمل synchronously داخل request.
+* retrain يستخدم queue.
+* embedding dimension mismatch تم إصلاحه.
+* tests مضافة.
+* docs محدثة.
+* DAY3_FINAL_

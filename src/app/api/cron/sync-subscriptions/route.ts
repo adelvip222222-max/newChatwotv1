@@ -6,10 +6,12 @@ import { syncSubscriptionWithStripe } from "@/lib/billing";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
-  // In production, we should protect this route with a secret key
-  // e.g. if (request.headers.get("Authorization") !== `Bearer ${process.env.CRON_SECRET}`)
+  if (!process.env.CRON_SECRET) {
+    return NextResponse.json({ error: "CRON_SECRET is not configured." }, { status: 500 });
+  }
+
   const authHeader = request.headers.get("Authorization");
-  if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

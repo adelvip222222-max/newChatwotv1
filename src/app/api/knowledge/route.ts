@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireAdmin } from "@/lib/authz";
+import { requirePermission } from "@/server/auth/guards";
+import { permissions } from "@/server/permissions/permissions";
 import { createKnowledgeDocument, knowledgeSourceTypes } from "@/lib/knowledge";
 
 const sourceTypesArray = [
@@ -24,7 +25,7 @@ const schema = z.object({
 
 export async function POST(request: Request) {
   try {
-    const session = await requireAdmin();
+    const session = await requirePermission(permissions.knowledgeManage);
     const form = await request.formData();
     const fileValue = form.get("file");
     const body = schema.parse({

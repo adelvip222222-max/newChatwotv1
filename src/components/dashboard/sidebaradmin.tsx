@@ -11,22 +11,26 @@ import {
   Activity,
   Gauge,
   ShieldCheck,
-  LayoutDashboard
+  LayoutDashboard,
+  Terminal
 } from "lucide-react";
 import { useState } from "react";
 import { useI18n } from "@/components/i18n-provider";
+import { useRouter } from "next/navigation";
 
 export function SidebarAdmin() {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const { t, locale, setLocale } = useI18n();
+  const router = useRouter();
 
   const links = [
     { href: "/admin", label: locale === "ar" ? "الرئيسية" : "Overview", icon: LayoutDashboard },
     { href: "/admin/users", label: t.nav.adminUsers, icon: Users },
     { href: "/admin/ai-models", label: t.nav.adminAi, icon: LockKeyhole },
     { href: "/admin/billing", label: t.nav.adminBilling, icon: CreditCard },
-    { href: "/admin/subscriptions", label: locale === "ar" ? "إدارة الاشتراكات" : "Subscriptions", icon: Activity }
+    { href: "/admin/subscriptions", label: locale === "ar" ? "إدارة الاشتراكات" : "Subscriptions", icon: Activity },
+    { href: "/developer", label: locale === "ar" ? "لوحة المطور" : "Developer", icon: Terminal }
   ];
 
   return (
@@ -38,12 +42,13 @@ export function SidebarAdmin() {
       >
         <Menu size={20} />
       </button>
+      <div className={`hidden lg:block shrink-0 transition-all ${collapsed ? "w-20" : "w-64"}`} />
       <aside
-        className={`fixed inset-y-0 rtl:right-0 ltr:left-0 z-40 rtl:border-l ltr:border-r border-slate-200 bg-ink text-white transition-all lg:sticky lg:top-0 lg:h-screen lg:self-start flex flex-col justify-between ${
+        className={`fixed inset-y-0 rtl:right-0 ltr:left-0 z-40 rtl:border-l ltr:border-r border-slate-200 bg-slate-950 text-white transition-all lg:top-0 lg:h-screen flex flex-col justify-between ${
           collapsed ? "w-20" : "w-64"
         } ${mobileOpen ? "translate-x-0" : "rtl:translate-x-full ltr:-translate-x-full lg:rtl:translate-x-0 lg:ltr:translate-x-0"}`}
       >
-        <div className="flex flex-col overflow-y-auto min-h-0 flex-1">
+        <div className="flex flex-col overflow-y-auto min-h-0 flex-1 no-scrollbar">
           {/* Header */}
           <div className="p-4">
             <div className="flex items-center justify-between gap-3">
@@ -91,7 +96,10 @@ export function SidebarAdmin() {
         {/* Footer actions */}
         <div className="p-4 border-t border-white/5 space-y-2">
           <button
-            onClick={() => setLocale(locale === "en" ? "ar" : "en")}
+            onClick={() => {
+              setLocale(locale === "en" ? "ar" : "en");
+              router.refresh();
+            }}
             className="flex w-full items-center justify-center gap-2 rounded-md bg-white/5 px-2 py-2 text-xs font-semibold text-slate-300 hover:bg-white/10 hover:text-white transition"
             title={locale === "en" ? "تحويل للعربية" : "Switch to English"}
           >
