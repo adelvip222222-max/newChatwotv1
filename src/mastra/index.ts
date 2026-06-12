@@ -8,7 +8,7 @@ import { aiReplyWorkflow } from "@/mastra/workflows/ai-reply.workflow";
 export const mastra = new Mastra({
   storage: new LibSQLStore({
     id: "chatzi-mastra-storage",
-    url: process.env.MASTRA_STORAGE_URL || "file:./mastra.db",
+    url: process.env.MASTRA_STORAGE_URL || "file:/tmp/chatzi-mastra.db",
   }),
   agents: {
     customerSupportAgent,

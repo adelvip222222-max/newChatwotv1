@@ -308,7 +308,7 @@ export function KnowledgeManager({
             <div className="rounded-md bg-slate-50 p-3 text-xs text-slate-600">
               <p>🎯 ثقة الرد المباشر: <strong>{bot?.confidenceDirectThreshold ?? 70}%</strong></p>
               <p>🔍 ثقة السؤال التوضيحي: <strong>{bot?.confidenceReviewThreshold ?? 40}%</strong></p>
-              <p className="mt-1 text-slate-400">لتغيير هذه القيم، اذهب إلى تبويب "إعدادات البوت".</p>
+              <p className="mt-1 text-slate-400">لتغيير هذه القيم، اذهب إلى تبويب &quot;إعدادات البوت&quot;.</p>
             </div>
             <button className="btn-secondary" disabled={loading === "settings2" || !selectedBot}>
               <Save size={16} /> حفظ
