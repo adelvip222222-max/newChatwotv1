@@ -1,10 +1,10 @@
-import { requireAdmin } from "@/lib/authz";
+import { requirePlatformAdmin } from "@/lib/authz";
 import { getGlobalAnalytics, getTenantsWithEmployees } from "@/lib/admin-analytics";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { AdminMainDashboard } from "@/components/admin/main-dashboard";
 
 export default async function AdminPage() {
-  await requireAdmin();
+  await requirePlatformAdmin();
   
   const stats = await getGlobalAnalytics();
   const tenants = await getTenantsWithEmployees();

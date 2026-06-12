@@ -1,0 +1,537 @@
+DAY 4.5 HOTFIX + DAY 5 EXECUTION (للحساب الجديد على Replit)
+
+Project: newChatwotv1
+
+قبل البدء بأي تنفيذ:
+
+1. اقرأ الـ Documentation والمجلدات التالية بالكامل للحصول على خلفية كاملة عن المشروع:
+    * README.md
+    * docs/
+    * docs/reports/
+    * أي ملفات تنفيذ أو تقارير خاصة بـ Days 1 → 4
+2. لا تعتمد على التقارير فقط، بل استخدمها لفهم ما تم التخطيط له ثم تحقق من الكود الفعلي.
+3. بما أن هذا حساب جديد على Replit، يجب أولاً توثيق وفهم:
+    * ما الذي تم تنفيذه فعلياً داخل الكود.
+    * ما الذي تم إصلاحه سابقاً.
+    * ما الذي لا يزال ناقصاً أو منفذاً جزئياً.
+4. أنشئ ملخصاً داخلياً قبل التنفيذ يوضح:
+    * Current Architecture
+    * Completed Features
+    * Pending Work
+    * Known Issues
+5. أي بند موجود بالفعل في الكود ومكتمل لا يتم إعادة تنفيذه.
+6. أي بند منفذ جزئياً أو يحتوي على أخطاء يجب إصلاحه واستكماله.
+
+Project: newChatwotv1
+
+ممنوع الاعتماد على التقارير السابقة فقط.
+
+يجب فحص الكود الفعلي أولاً ثم تنفيذ المطلوب.
+
+أي بند تم تنفيذه بالفعل في الكود لا يُعاد تنفيذه.
+أي بند غير مكتمل أو منفذ جزئياً يجب إصلاحه.
+
+⸻
+
+PHASE A — HOTFIX REMAINING ITEMS FROM DAYS 1-4
+
+H1 — Fix Channel Omnichannel Limitation
+
+راجع:
+
+src/lib/models/channel.ts
+
+تم اكتشاف أن هناك unique index يمنع تعدد القنوات من نفس النوع:
+
+{ tenantId, botId, type }
+
+هذا يمنع:
+
+* أكثر من Facebook Page
+* أكثر من Instagram Account
+* أكثر من WhatsApp Number
+* أكثر من Web Widget
+
+لنفس البوت.
+
+المطلوب
+
+إعادة تصميم الفهرسة بحيث تسمح بـ:
+
+N Facebook Pages
+N Instagram Accounts
+N WhatsApp Numbers
+N Widgets
+
+لنفس البوت.
+
+مع الحفاظ على uniqueness الحقيقي بواسطة:
+
+provider-specific identifier
+
+مثل:
+
+pageId
+instagramBusinessId
+phoneNumberId
+externalChannelId
+
+أضف migration آمنة إذا لزم.
+
+⸻
+
+H2 — Complete Redis Realtime Wiring
+
+راجع:
+
+src/lib/realtime.ts
+publishRealtimeEvent()
+
+تحقق هل تم توصيلها فعلاً أم لا.
+
+إذا لم تكن موصلة بالكامل:
+
+اربطها مع:
+
+new incoming message
+agent reply
+AI reply
+conversation update
+assignment update
+delivery status update
+conversation close/open
+
+يجب أن تصل الأحداث فعلياً إلى:
+
+SSE subscribers
+
+لكل tenant.
+
+مطلوب
+
+اختبارات تثبت أن:
+
+Tenant A لا يستقبل أحداث Tenant B.
+
+⸻
+
+H3 — Fix Meta OAuth Single-Use Sessions
+
+راجع:
+
+consumePagesSession()
+generateOAuthState()
+consumeOAuthState()
+
+المطلوب
+
+التأكد أن:
+
+OAuth state
+Pages session
+
+Single-use فعلياً.
+
+بعد الاستخدام:
+
+Redis DEL
+
+وليس مجرد read.
+
+⸻
+
+H4 — AI Tool Context Integrity
+
+راجع:
+
+save_lead_data
+create_ticket
+update_contact_profile
+
+وتحقق أن:
+
+tenantId
+conversationId
+contactId
+userId
+
+يتم تمريرهم بالكامل.
+
+إذا كان contactId غير موجود في tool context:
+
+أصلحه.
+
+⸻
+
+H5 — Fix Day 4 Test Failures
+
+شغل جميع الاختبارات الخاصة بـ Day4.
+
+أي اختبار فاشل:
+
+* حل السبب الحقيقي.
+* لا تقم بحذف الاختبار.
+* لا تستخدم skip.
+
+⸻
+
+PHASE B — DAY 5 EXECUTION
+
+⸻
+
+T5.1 — Qdrant Integration
+
+الهدف
+
+إلغاء الاعتماد على:
+
+in-memory cosine search
+
+كأساس للـ RAG.
+
+المطلوب
+
+إضافة:
+
+@qdrant/js-client-rest
+
+وإنشاء:
+
+src/lib/qdrant.ts
+
+Collection Strategy
+
+لا تستخدم:
+
+collection لكل tenant
+
+لأنه لا يتوسع جيداً.
+
+استخدم:
+
+knowledge_chunks
+
+Collection واحدة.
+
+مع payload filters:
+
+tenantId
+botId
+documentId
+categoryId
+collectionId
+embeddingProvider
+isTemporary
+expiresAt
+
+⸻
+
+Search Strategy
+
+Qdrant:
+
+semantic search
+
+Mongo:
+
+keyword search
+
+ثم:
+
+hybrid ranking
+
+كما هو موضح في الخطة الأصلية.
+
+⸻
+
+T5.2 — Existing Data Migration
+
+أنشئ:
+
+scripts/migrate-chunks-to-qdrant.ts
+
+يقوم بـ:
+
+batch migration
+resume support
+progress logging
+retry support
+
+ولا يفترض أن جميع البيانات OpenAI.
+
+يجب التعامل مع:
+
+openai
+local-hash
+
+بطريقة صحيحة.
+
+⸻
+
+T5.3 — Lead Domain
+
+إنشاء Domain حقيقي:
+
+src/lib/models/lead.ts
+
+وليس Task workaround.
+
+الـ Lead يجب أن يدعم:
+
+stage
+value
+currency
+assignedTo
+sourceChannel
+tags
+customFields
+
+⸻
+
+APIs
+
+GET /api/leads
+POST /api/leads
+PATCH /api/leads/[id]
+
+⸻
+
+AI Integration
+
+عندما يستخرج AI:
+
+name
+phone
+email
+interest
+budget
+booking intent
+
+يجب أن يتم:
+
+upsert lead
+
+وليس إنشاء duplicate.
+
+⸻
+
+T5.4 — Ticket Domain
+
+إنشاء:
+
+src/lib/models/ticket.ts
+
+مع:
+
+priority
+status
+category
+assignedTo
+teamId
+dueAt
+resolvedAt
+slaBreached
+
+⸻
+
+APIs
+
+GET /api/tickets
+POST /api/tickets
+PATCH /api/tickets/[id]
+
+⸻
+
+AI Integration
+
+Support Agent يجب أن يستطيع:
+
+create_ticket
+update_ticket
+escalate_ticket
+
+بطريقة آمنة.
+
+⸻
+
+T5.5 — Entitlement System
+
+المشكلة الحالية
+
+الخطط تتحكم تقريباً فقط في:
+
+monthlyMessageLimit
+
+وهذا غير كافٍ.
+
+⸻
+
+المطلوب
+
+إنشاء:
+
+src/lib/models/entitlement.ts
+src/lib/entitlements.ts
+
+⸻
+
+أمثلة
+
+max_channels
+max_agents
+max_bots
+max_team_members
+knowledge_enabled
+advanced_ai_enabled
+instagram_enabled
+whatsapp_enabled
+
+⸻
+
+Enforcement
+
+قبل:
+
+Channel.create
+User invite
+Bot.create
+
+يجب فحص:
+
+checkEntitlement()
+
+⸻
+
+T5.6 — AI Agent Role Validation
+
+راجع:
+
+Receptionist
+Sales
+Support
+
+وتأكد أن:
+
+* Sales ينشئ Leads.
+* Support ينشئ Tickets.
+* Receptionist يقوم بالتصنيف فقط.
+
+إذا لم يكن ذلك مطبقاً فعلياً:
+
+قم بتطبيقه.
+
+⸻
+
+T5.7 — Knowledge Temporary Data Lifecycle
+
+راجع:
+
+isTemporary
+expiresAt
+
+وتأكد أن:
+
+* Qdrant filters تحترم expiration.
+* Mongo filters تحترم expiration.
+* Expired content لا يظهر في AI context.
+
+⸻
+
+T5.8 — Production Readiness Audit
+
+بعد انتهاء التنفيذ:
+
+قم بعمل Audit للكود الفعلي.
+
+⸻
+
+أنشئ:
+
+docs/reports/DAY5_FINAL_REPORT.md
+
+ويحتوي على:
+
+1. Day 1-4 Remaining Items
+
+جدول:
+
+Issue
+Fixed?
+How Fixed?
+Files
+
+⸻
+
+2. Qdrant Status
+
+Client
+Collections
+Migration
+Hybrid Search
+Performance Impact
+
+⸻
+
+3. Lead System Status
+
+Model
+APIs
+AI Integration
+Duplicate Prevention
+
+⸻
+
+4. Ticket System Status
+
+Model
+APIs
+AI Integration
+SLA Ready
+
+⸻
+
+5. Entitlements Status
+
+Model
+Checks
+Billing Integration
+
+⸻
+
+6. Remaining Risks
+
+اذكر فقط المخاطر الحقيقية الموجودة في الكود.
+
+ممنوع كتابة مخاطر افتراضية.
+
+⸻
+
+7. Updated System Score
+
+أعد تقييم:
+
+Omnichannel
+AI
+Knowledge
+Billing
+Security
+Scalability
+Maintainability
+SaaS
+
+من واقع الكود الحالي.
+
+⸻
+
+Definition Of Done
+
+لا يعتبر Day 5 منتهياً إلا إذا:
+
+✅ تم قفل Hotfixes المتبقية من Days 1-4
+✅ تم دمج Qdrant فعلياً
+✅ تم إنشاء Lead Domain حقيقي
+✅ تم إنشاء Ticket Domain حقيقي
+✅ تم إنشاء Entitlement System حقيقي
+✅ تم ربط AI بالـ Leads و Tickets
+✅ تم تحديث الاختبارات
+✅ تم إنشاء DAY5_FINAL_REPORT.md من واقع ال

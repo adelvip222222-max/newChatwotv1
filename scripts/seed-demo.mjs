@@ -4,10 +4,7 @@
  * Creates a demo owner account + tenant + default bot.
  * Run with: node scripts/seed-demo.mjs
  *
- * Credentials created:
- *   Email:    demo@chatzi.ai
- *   Password: Demo@12345
- *   Tenant:   ChatZi Demo
+ * Credentials are read from DEMO_EMAIL and DEMO_PASSWORD.
  */
 
 import mongoose from "mongoose";
@@ -76,8 +73,8 @@ const User   = mongoose.models?.User   || mongoose.model("User",   userSchema);
 const Bot    = mongoose.models?.Bot    || mongoose.model("Bot",    botSchema);
 
 // ─── Demo credentials ──────────────────────────────────────────
-const DEMO_EMAIL    = "demo@chatzi.ai";
-const DEMO_PASSWORD = "Demo@12345";
+const DEMO_EMAIL    = process.env.DEMO_EMAIL || "demo@chatzi.local";
+const DEMO_PASSWORD = process.env.DEMO_PASSWORD || `Demo-${Date.now()}!`;
 const DEMO_NAME     = "ChatZi Demo";
 const DEMO_TENANT   = "ChatZi Demo";
 

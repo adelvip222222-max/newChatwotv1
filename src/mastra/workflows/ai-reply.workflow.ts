@@ -229,6 +229,8 @@ const loadConversationStep = createStep({
                 channel: inputData.channel,
                 externalUserId: inputData.externalUserId,
                 status: "open",
+                mode: "ai",
+                aiStatus: "active",
               },
             },
             { new: true, upsert: true }
@@ -246,24 +248,34 @@ const loadConversationStep = createStep({
       tenantId: inputData.tenantId,
       botId: inputData.botId,
       conversationId: conversation._id,
+      contactId: conversation.contactId,
+      channelIdentityId: conversation.channelIdentityId,
+      provider: inputData.channel,
+      direction: "incoming",
       sender: "user",
+      senderType: "customer",
       content: contentForStorage,
+      deliveryStatus: "delivered",
       attachments,
       metadata: inputData.metadata || {},
     });
+
+    const shouldSkip =
+      conversation.status === "closed" ||
+      conversation.status === "resolved" ||
+      conversation.mode === "human" ||
+      conversation.aiPaused === true;
 
     return {
       ...inputData,
       conversationId: conversation._id.toString(),
       userMessageId: userMessage._id.toString(),
-      action:
-        conversation.status === "closed" || conversation.status === "human"
-          ? ("skip" as const)
-          : undefined,
-      reason:
-        conversation.status === "closed" || conversation.status === "human"
-          ? `conversation_${conversation.status}`
-          : undefined,
+      action: shouldSkip ? ("skip" as const) : undefined,
+      reason: shouldSkip
+        ? conversation.mode === "human" || conversation.aiPaused
+          ? "conversation_human_mode"
+          : `conversation_${conversation.status}`
+        : undefined,
       bot: {
         name: bot.name,
         knowledgeEnabled: bot.knowledgeEnabled ?? true,
@@ -585,7 +597,17 @@ const persistResultStep = createStep({
     if (action === "handoff") {
       await Conversation.updateOne(
         { _id: inputData.conversationId, tenantId: inputData.tenantId, botId: inputData.botId },
-        { $set: { status: "human" } }
+        {
+          $set: {
+            status: "pending",
+            mode: "human",
+            aiPaused: true,
+            aiPausedAt: new Date(),
+            aiPausedReason: inputData.reason || "ticket_created",
+            aiStatus: "escalated",
+            handoffReason: inputData.reason || "ticket_created",
+          },
+        }
       );
     }
 
@@ -593,8 +615,12 @@ const persistResultStep = createStep({
       tenantId: inputData.tenantId,
       botId: inputData.botId,
       conversationId: inputData.conversationId,
+      provider: inputData.channel,
+      direction: "outgoing",
       sender: "assistant",
+      senderType: "assistant",
       content: reply,
+      deliveryStatus: "sent",
       metadata: {
         responseId: inputData.responseId,
         provider: inputData.providerUsed || "mastra",

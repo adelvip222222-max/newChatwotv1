@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireAdmin } from "@/lib/authz";
+import { requirePermission } from "@/server/auth/guards";
+import { permissions } from "@/server/permissions/permissions";
 import { AiSetting, AiModel, Bot } from "@/lib/models";
 import { connectToDatabase } from "@/lib/mongodb";
 import { DEFAULT_SYSTEM_PROMPT } from "@/lib/strings";
 
 const schema = z.object({
   botId: z.string().min(1),
-  aiModelId: z.string().min(1),
+
   isEnabled: z.boolean(),
   temperature: z.number().min(0).max(2),
   systemPrompt: z.string().min(10),
@@ -21,18 +22,13 @@ const schema = z.object({
 
 export async function POST(request: Request) {
   try {
-    const session = await requireAdmin();
+    const session = await requirePermission(permissions.aiManage);
     const body = schema.parse(await request.json());
     await connectToDatabase();
 
     const bot = await Bot.findOne({ _id: body.botId, tenantId: session.user.tenantId });
     if (!bot) return NextResponse.json({ error: "البوت غير موجود." }, { status: 404 });
 
-    const aiModel = await AiModel.findOne({
-      _id: body.aiModelId,
-      isActive: true
-    });
-    if (!aiModel) return NextResponse.json({ error: "نموذج AI غير موجود أو غير مفعل." }, { status: 404 });
 
     await AiSetting.findOneAndUpdate(
       { tenantId: session.user.tenantId, botId: body.botId },
@@ -40,9 +36,7 @@ export async function POST(request: Request) {
         $set: {
           tenantId: session.user.tenantId,
           botId: body.botId,
-          aiModelId: body.aiModelId,
-          provider: aiModel.provider,
-          model: aiModel.model,
+
           temperature: body.temperature,
           systemPrompt: body.systemPrompt || DEFAULT_SYSTEM_PROMPT,
           language: body.language || "auto",

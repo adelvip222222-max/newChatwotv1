@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireAdmin } from "@/lib/authz";
+import { requirePermission } from "@/server/auth/guards";
+import { permissions } from "@/server/permissions/permissions";
 import { retrainAllKnowledge, trainKnowledgeDocument } from "@/lib/knowledge";
 
 const schema = z.object({
@@ -10,7 +11,7 @@ const schema = z.object({
 
 export async function POST(request: Request) {
   try {
-    const session = await requireAdmin();
+    const session = await requirePermission(permissions.knowledgeManage);
     const body = schema.parse(await request.json().catch(() => ({})));
     if (body.documentId) {
       await trainKnowledgeDocument(body.documentId, session.user.tenantId);

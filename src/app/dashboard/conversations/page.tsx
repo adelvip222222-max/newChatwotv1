@@ -1,49 +1,53 @@
-import Link from "next/link";
-import { Eye } from "lucide-react";
-import { requireSession } from "@/lib/auth";
-import { getConversations } from "@/lib/dashboard-data";
-import { PageHeader } from "@/components/dashboard/page-header";
+export const dynamic = "force-dynamic";
 
-export default async function ConversationsPage() {
-  const session = await requireSession();
-  const conversations = await getConversations(session.user.tenantId);
+import { requirePermission } from "@/server/auth/guards";
+import { permissions } from "@/server/permissions/permissions";
+import { getConversationDetail, getInboxConversations } from "@/lib/inbox/service";
+import { AIInboxClient } from "@/components/inbox/ai-inbox-client";
+
+export default async function InboxPage({
+  searchParams
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const session = await requirePermission(permissions.inboxRead);
+  const params = await searchParams;
+
+  const value = (key: string) => {
+    const raw = params[key];
+    return Array.isArray(raw) ? raw[0] || "" : raw || "";
+  };
+
+  const initialData = await getInboxConversations({
+    tenantId: session.user.tenantId,
+    userId: session.user.id,
+    filters: {
+      view: value("view") || "inbox",
+      q: value("q"),
+      channel: value("channel"),
+      agent: value("agent"),
+      team: value("team"),
+      status: value("status"),
+      priority: value("priority"),
+      tags: value("tags"),
+      limit: 45
+    }
+  });
+
+  const activeConversationId = value("conversationId") || initialData.conversations[0]?.id || "";
+  const initialDetail = activeConversationId
+    ? await getConversationDetail({
+        tenantId: session.user.tenantId,
+        conversationId: activeConversationId
+      }).catch(() => null)
+    : null;
 
   return (
-    <>
-      <PageHeader title="المحادثات" description="آخر محادثات العملاء عبر كل القنوات." />
-      <section className="panel overflow-hidden">
-        {conversations.length ? (
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-slate-500">
-              <tr>
-                <th className="p-3 text-right">البوت</th>
-                <th className="p-3 text-right">القناة</th>
-                <th className="p-3 text-right">المستخدم</th>
-                <th className="p-3 text-right">آخر رسالة</th>
-                <th className="p-3 text-right">إجراء</th>
-              </tr>
-            </thead>
-            <tbody>
-              {conversations.map((conversation) => (
-                <tr key={conversation.id} className="border-t border-slate-100">
-                  <td className="p-3 font-semibold text-ink">{conversation.botName}</td>
-                  <td className="p-3">{conversation.channel}</td>
-                  <td className="p-3">{conversation.externalUserId}</td>
-                  <td className="max-w-md truncate p-3 text-slate-600">{conversation.lastMessage || "-"}</td>
-                  <td className="p-3">
-                    <Link className="btn-secondary px-3 py-1.5" href={`/dashboard/conversations/${conversation.id}`}>
-                      <Eye size={16} />
-                      عرض
-                    </Link>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : (
-          <p className="p-6 text-sm text-slate-500">لا توجد محادثات بعد.</p>
-        )}
-      </section>
-    </>
+    <AIInboxClient
+      initialData={initialData}
+      initialDetail={initialDetail}
+      activeConversationId={activeConversationId}
+      currentUserId={session.user.id}
+    />
   );
 }

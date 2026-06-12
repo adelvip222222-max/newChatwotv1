@@ -1,0 +1,433 @@
+DAY 1 — Architecture Stabilization & Domain Foundation
+
+أنت الآن تعمل على مشروع newChatwotv1.
+
+ممنوع البدء في تنفيذ القنوات أو الذكاء الاصطناعي أو الدفع قبل إنهاء هذه المرحلة.
+
+هذه المرحلة هي مرحلة Architecture Foundation.
+
+الهدف هو تجهيز المشروع ليكون قادرًا على استيعاب:
+
+* Omnichannel
+* AI Agent
+* Knowledge Base
+* Team System
+* Billing
+* SaaS
+* Super Admin
+* Tickets/Leads
+
+بدون Technical Debt.
+
+⸻
+
+مهم جدًا
+
+لا تفترض أي شيء.
+
+افحص المشروع بالكامل أولًا.
+
+يجب فحص:
+
+src/
+app/
+components/
+lib/
+server/
+api/
+models/
+db/
+auth/
+channels/
+conversations/
+messages/
+billing/
+ai/
+knowledge/
+queues/
+workers/
+admin/
+
+أو ما يعادلها حسب هيكل المشروع.
+
+⸻
+
+قواعد هندسية ملزمة
+
+يجب الالتزام بـ:
+
+Performance & Scalability
+
+Security
+
+Availability
+
+Maintainability
+
+Clean Code
+
+SOLID
+
+DRY
+
+KISS
+
+YAGNI
+
+⸻
+
+Phase 1 — Deep Discovery
+
+أنشئ تقرير:
+
+docs/reports/DAY1_DISCOVERY_REPORT.md
+
+يحتوي على:
+
+Current Stack
+
+* Framework
+* Database
+* ORM/ODM
+* Auth
+* Queue
+* Realtime
+* AI
+* Billing
+* Storage
+
+⸻
+
+Existing Domains
+
+استخرج جميع Domains الموجودة.
+
+مثال:
+
+Auth
+Users
+Teams
+Channels
+Conversations
+Messages
+AI
+Knowledge
+Billing
+Admin
+
+⸻
+
+Existing Models
+
+اعرض:
+
+Model Name
+Purpose
+Relations
+Problems
+
+⸻
+
+Existing APIs
+
+اعرض:
+
+Route
+Purpose
+Auth
+Problems
+
+⸻
+
+Existing Integrations
+
+اعرض:
+
+Telegram
+WhatsApp
+Instagram
+Messenger
+Stripe
+Qdrant
+OpenAI
+
+ووضح:
+
+Implemented
+Partial
+Missing
+Stub
+
+⸻
+
+Phase 2 — Architecture Audit
+
+ابحث عن:
+
+Code Smells
+
+* duplicate logic
+* large files
+* god services
+* circular dependencies
+* hidden coupling
+* dead code
+* fake implementations
+
+⸻
+
+Security Issues
+
+ابحث عن:
+
+* exposed tokens
+* oauth problems
+* missing validation
+* missing RBAC
+* insecure webhooks
+* tenant isolation issues
+
+⸻
+
+Scalability Issues
+
+ابحث عن:
+
+* missing indexes
+* blocking requests
+* direct provider calls
+* missing queues
+* missing retries
+* N+1 queries
+
+⸻
+
+Phase 3 — Domain Definition
+
+أنشئ أو حسّن Domain Map.
+
+يجب أن يكون لدينا:
+
+Tenant
+Membership
+Role
+ChannelConnection
+Inbox
+Conversation
+Message
+MessageDelivery
+Contact
+Lead
+Ticket
+Agent
+AgentConfig
+KnowledgeSource
+KnowledgeChunk
+Plan
+Subscription
+Entitlement
+
+⸻
+
+Phase 4 — Omnichannel Foundation
+
+أنشئ تصميم موحد للقنوات.
+
+لا تنفذ القنوات بعد.
+
+فقط أنشئ:
+
+ChannelProviderAdapter
+
+Architecture.
+
+يجب أن يدعم:
+
+Telegram
+WhatsApp
+Messenger
+Instagram
+Web Chat
+
+⸻
+
+أنشئ:
+
+docs/architecture/CHANNEL_ARCHITECTURE.md
+
+واشرح:
+
+Inbound Flow
+Outbound Flow
+Webhook Flow
+OAuth Flow
+
+⸻
+
+Phase 5 — Message Pipeline Design
+
+أنشئ التصميم التالي:
+
+Webhook
+→ Verify
+→ Raw Event
+→ Queue
+→ Normalize
+→ Contact
+→ Conversation
+→ Message
+→ AI
+→ Delivery
+
+ولا تنفذه بالكامل بعد.
+
+⸻
+
+أنشئ:
+
+docs/architecture/MESSAGE_PIPELINE.md
+
+⸻
+
+Phase 6 — AI Architecture Design
+
+لا تنفذ AI اليوم.
+
+صمم فقط.
+
+أنشئ:
+
+docs/architecture/AI_ARCHITECTURE.md
+
+ويشرح:
+
+Receptionist Agent
+Sales Agent
+Knowledge Retrieval
+Follow Up
+Human Handoff
+Confidence Scoring
+
+⸻
+
+Phase 7 — Knowledge Architecture
+
+أنشئ:
+
+docs/architecture/KNOWLEDGE_ARCHITECTURE.md
+
+ويشمل:
+
+Core Knowledge
+Temporary Knowledge
+Qdrant
+Embeddings
+Retrieval
+Expiration Rules
+
+⸻
+
+Phase 8 — SaaS Architecture
+
+أنشئ:
+
+docs/architecture/SAAS_ARCHITECTURE.md
+
+ويشمل:
+
+Tenants
+Users
+Roles
+Plans
+Subscriptions
+Entitlements
+Super Admin
+
+⸻
+
+Phase 9 — Backlog Creation
+
+أنشئ:
+
+docs/reports/7_DAY_EXECUTION_BACKLOG.md
+
+قسم العمل إلى:
+
+Day 2
+Day 3
+Day 4
+Day 5
+Day 6
+Day 7
+
+مع:
+
+Priority
+
+Complexity
+
+Dependencies
+
+Estimated Effort
+
+⸻
+
+Deliverables
+
+يعتبر Day 1 منتهي فقط إذا تم إنتاج:
+
+DAY1_DISCOVERY_REPORT.md
+CHANNEL_ARCHITECTURE.md
+MESSAGE_PIPELINE.md
+AI_ARCHITECTURE.md
+KNOWLEDGE_ARCHITECTURE.md
+SAAS_ARCHITECTURE.md
+7_DAY_EXECUTION_BACKLOG.md
+
+⸻
+
+Final Day 1 Report
+
+أنشئ:
+
+docs/reports/DAY1_FINAL_REPORT.md
+
+ويحتوي على:
+
+Current System Score
+
+Omnichannel
+
+AI
+
+Knowledge Base
+
+Billing
+
+SaaS
+
+Security
+
+Scalability
+
+Maintainability
+
+⸻
+
+Top 20 Problems
+
+مرتبة حسب الخطورة.
+
+⸻
+
+Top 20 Quick Wins
+
+مرتبة حسب التأثير.
+
+⸻
+
+Readiness For Day 2
+
+هل يمكن البدء في تنفيذ القنوات؟
+
+وما المخاطر المتبق

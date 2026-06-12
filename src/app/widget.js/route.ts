@@ -59,6 +59,86 @@ export async function GET() {
       height: 26px;
       fill: currentColor;
     }
+    .cz-layout {
+      display: flex;
+      gap: 12px;
+      align-items: flex-end;
+      pointer-events: none;
+    }
+    .cz-personas-sidebar {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-bottom: 16px;
+      opacity: 0;
+      transform: translateX(20px);
+      transition: all 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+      pointer-events: none;
+    }
+    .cz-personas-sidebar.open {
+      opacity: 1;
+      transform: translateX(0);
+      pointer-events: auto;
+    }
+    .cz-persona-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background: #fff;
+      border: 1px solid rgba(155, 89, 208, 0.2);
+      box-shadow: 0 4px 12px rgba(155, 89, 208, 0.1);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      position: relative;
+      transition: all 0.2s;
+      color: #7c3aed;
+    }
+    .cz-persona-icon:hover {
+      transform: scale(1.1);
+      box-shadow: 0 6px 16px rgba(155, 89, 208, 0.2);
+      border-color: #7c3aed;
+    }
+    .cz-persona-icon svg {
+      width: 22px;
+      height: 22px;
+      fill: currentColor;
+    }
+    .cz-persona-icon.active {
+      background: linear-gradient(135deg, #9b59d0 0%, #7c3aed 100%);
+      color: #fff;
+    }
+    .cz-persona-tooltip {
+      position: absolute;
+      right: calc(100% + 12px);
+      top: 50%;
+      transform: translateY(-50%) translateX(10px);
+      background: #1e293b;
+      color: #fff;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      white-space: nowrap;
+      opacity: 0;
+      pointer-events: none;
+      transition: all 0.2s;
+    }
+    .cz-persona-icon:hover .cz-persona-tooltip {
+      opacity: 1;
+      transform: translateY(-50%) translateX(0);
+    }
+    .cz-persona-tooltip::after {
+      content: "";
+      position: absolute;
+      left: 100%;
+      top: 50%;
+      transform: translateY(-50%);
+      border-width: 5px;
+      border-style: solid;
+      border-color: transparent transparent transparent #1e293b;
+    }
     .cz-panel {
       width: 380px;
       max-width: calc(100vw - 32px);
@@ -379,7 +459,7 @@ export async function GET() {
       font-family: inherit;
       color: #1e293b;
     }
-    .cz-btn-audio {
+    .cz-btn-audio, .cz-btn-image {
       border: 0;
       background: transparent;
       color: #64748b;
@@ -391,11 +471,11 @@ export async function GET() {
       padding: 6px;
       border-radius: 50%;
     }
-    .cz-btn-audio:hover {
+    .cz-btn-audio:hover, .cz-btn-image:hover {
       color: #9b59d0;
       background: rgba(155, 89, 208, 0.08);
     }
-    .cz-btn-audio svg {
+    .cz-btn-audio svg, .cz-btn-image svg {
       width: 18px;
       height: 18px;
       fill: currentColor;
@@ -435,6 +515,15 @@ export async function GET() {
       fill: currentColor;
       transform: rotate(180deg);
     }
+    .cz-image-preview {
+      display: block;
+      max-width: 220px;
+      max-height: 180px;
+      border-radius: 12px;
+      margin-top: 8px;
+      object-fit: cover;
+      border: 1px solid rgba(148, 163, 184, 0.25);
+    }
     .cz-typing-indicator {
       display: flex;
       align-items: center;
@@ -465,7 +554,7 @@ export async function GET() {
 
   var root = document.createElement("div");
   root.className = "cz-root";
-  root.innerHTML = '<button aria-label="Chat" class="cz-widget-button" data-cz-toggle><svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 9h12v2H6V9zm8 5H6v-2h8v2zm4-6H6V6h12v2z"/></svg></button><section class="cz-panel" data-cz-panel><header class="cz-header"><div class="cz-header-info"><div class="cz-avatar-container" data-cz-avatar-container><svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4V4c0-1.1-.9-2-2-2zm-2 12H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z"/></svg></div><div class="cz-header-text"><div class="cz-bot-name" data-cz-title>مساعد ChatZi</div><div class="cz-bot-status"><span class="cz-status-dot"></span>متصل الآن</div></div></div><button class="cz-close-btn" data-cz-close><svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button></header><div class="cz-log" data-cz-log></div><div class="cz-suggestions" data-cz-suggests style="display:none"></div><div class="cz-attachments" data-cz-attachments style="display:none"></div><form class="cz-form" data-cz-form><div class="cz-input-wrapper"><textarea class="cz-input" data-cz-input rows="1" placeholder="اكتب رسالتك..."></textarea><button type="button" title="رسالة صوتية" class="cz-btn-audio" data-cz-audio><svg viewBox="0 0 24 24"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/></svg></button></div><button class="cz-btn-submit"><svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></button></form></section>';
+  root.innerHTML = '<button aria-label="Chat" class="cz-widget-button" data-cz-toggle><svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 9h12v2H6V9zm8 5H6v-2h8v2zm4-6H6V6h12v2z"/></svg></button><div class="cz-layout"><div class="cz-personas-sidebar" data-cz-sidebar></div><section class="cz-panel" data-cz-panel><header class="cz-header"><div class="cz-header-info"><div class="cz-avatar-container" data-cz-avatar-container><svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4V4c0-1.1-.9-2-2-2zm-2 12H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z"/></svg></div><div class="cz-header-text"><div class="cz-bot-name" data-cz-title>مساعد ChatZi</div><div class="cz-bot-status"><span class="cz-status-dot"></span>متصل الآن</div></div></div><button class="cz-close-btn" data-cz-close><svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button></header><div class="cz-log" data-cz-log></div><div class="cz-suggestions" data-cz-suggests style="display:none"></div><div class="cz-attachments" data-cz-attachments style="display:none"></div><form class="cz-form" data-cz-form><div class="cz-input-wrapper"><textarea class="cz-input" data-cz-input rows="1" placeholder="اكتب رسالتك..."></textarea><input type="file" accept="image/*" data-cz-image-input style="display:none" /><button type="button" title="إرسال صورة" class="cz-btn-image" data-cz-image><svg viewBox="0 0 24 24"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 11.5l2.5 3.01L14.5 10l4.5 6H5l3.5-4.5z"/></svg></button><button type="button" title="رسالة صوتية" class="cz-btn-audio" data-cz-audio><svg viewBox="0 0 24 24"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/></svg></button></div><button class="cz-btn-submit"><svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></button></form></section></div>';
   document.body.appendChild(root);
 
   var panel = root.querySelector("[data-cz-panel]");
@@ -476,10 +565,14 @@ export async function GET() {
   var log = root.querySelector("[data-cz-log]");
   var filesBox = root.querySelector("[data-cz-attachments]");
   var audioButton = root.querySelector("[data-cz-audio]");
+  var imageButton = root.querySelector("[data-cz-image]");
+  var imageInput = root.querySelector("[data-cz-image-input]");
   var suggestsBox = root.querySelector("[data-cz-suggests]");
+  var sidebarBox = root.querySelector("[data-cz-sidebar]");
   var typingIndicator = null;
+  var personasData = [];
 
-  function add(sender, text, audioUrl) {
+  function add(sender, text, audioUrl, imageUrl) {
     var wrapper = document.createElement("div");
     wrapper.className = "cz-msg-wrapper " + (sender === "user" ? "user" : "assistant");
     
@@ -501,6 +594,14 @@ export async function GET() {
       bubble.appendChild(p);
     }
     
+    if (imageUrl) {
+      var img = document.createElement("img");
+      img.src = imageUrl;
+      img.alt = "image attachment";
+      img.className = "cz-image-preview";
+      bubble.appendChild(img);
+    }
+
     if (audioUrl) {
       var aud = document.createElement("audio");
       aud.src = audioUrl;
@@ -547,7 +648,8 @@ export async function GET() {
     state.attachments.forEach(function(att, idx) {
       var badge = document.createElement("div");
       badge.className = "cz-attachment-badge";
-      badge.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/></svg><span>' + att.name + "</span>";
+      var iconPath = att.type === "image" ? "M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 11.5l2.5 3.01L14.5 10l4.5 6H5l3.5-4.5z" : "M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z";
+      badge.innerHTML = '<svg viewBox="0 0 24 24"><path d="' + iconPath + '"/></svg><span>' + att.name + "</span>";
       
       var removeBtn = document.createElement("button");
       removeBtn.type = "button";
@@ -595,14 +697,26 @@ export async function GET() {
       }
     }
     
+    // Save personas
+    if (data.personas && data.personas.length) {
+      personasData = data.personas;
+      renderSidebar(personasData, data.bot, data.suggestions);
+    }
+    
     // Welcome message
-    add("assistant", "مرحباً! 👋 أنا " + ((data.bot && data.bot.name) || "مساعد ChatZi") + ". كيف يمكنني مساعدتك اليوم؟");
+    var welcomeName = (data.bot && data.bot.name) || "ChatZi";
+    var personaHint = data.personas && data.personas.length ? "\n\nيمكنك اختيار أحد الموظفين الآليين من الأيقونات الجانبية، أو اكتب طلبك مباشرة." : "";
+    add("assistant", "وعليكم السلام ورحمة الله وبركاته. أنا المساعد الذكي لـ " + welcomeName + ". كيف أقدر أساعدك اليوم؟" + personaHint);
     
     // Render suggestions
-    if (data.suggestions && data.suggestions.length) {
+    renderSuggestions(data.suggestions);
+  }
+
+  function renderSuggestions(suggestionsArray) {
+    if (suggestionsArray && suggestionsArray.length) {
       suggestsBox.style.display = "flex";
       suggestsBox.innerHTML = "";
-      data.suggestions.forEach(function(s) {
+      suggestionsArray.forEach(function(s) {
         var pill = document.createElement("button");
         pill.type = "button";
         pill.className = "cz-suggest-pill";
@@ -619,10 +733,78 @@ export async function GET() {
     }
   }
 
+  function renderSidebar(personas, botObj, baseSuggestions) {
+    sidebarBox.innerHTML = "";
+    if (!personas || personas.length === 0) return;
+    
+    // Default bot icon (active initially)
+    var defaultIcon = document.createElement("div");
+    defaultIcon.className = "cz-persona-icon active";
+    defaultIcon.innerHTML = '<svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4V4c0-1.1-.9-2-2-2zm-2 12H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z"/></svg><div class="cz-persona-tooltip">المساعد العام</div>';
+    
+    defaultIcon.addEventListener("click", function() {
+      // Clear log and switch context
+      log.innerHTML = "";
+      root.querySelectorAll(".cz-persona-icon").forEach(function(el) { el.classList.remove("active"); });
+      defaultIcon.classList.add("active");
+      root.querySelector("[data-cz-title]").textContent = botObj.name || "مساعد ChatZi";
+      add("assistant", "وعليكم السلام ورحمة الله وبركاته. أنا المساعد الذكي لـ " + (botObj.name || "ChatZi") + ". كيف أقدر أساعدك اليوم؟");
+      renderSuggestions(baseSuggestions);
+    });
+    sidebarBox.appendChild(defaultIcon);
+
+    // Dynamic Employee Icons
+    personas.forEach(function(p) {
+      var icon = document.createElement("div");
+      icon.className = "cz-persona-icon";
+      // Use Users icon
+      icon.innerHTML = '<svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><div class="cz-persona-tooltip">' + p.roleName + '</div>';
+      
+      icon.addEventListener("click", async function() {
+        // Visually switch
+        root.querySelectorAll(".cz-persona-icon").forEach(function(el) { el.classList.remove("active"); });
+        icon.classList.add("active");
+        
+        // Update Header
+        root.querySelector("[data-cz-title]").textContent = p.roleName;
+        
+        // Clear log
+        log.innerHTML = "";
+        
+        // Send a silent payload to switch persona on backend
+        try {
+          await fetch(apiBase + "/api/widget/message", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              botId: botId,
+              conversationId: state.conversationId,
+              visitorId: visitorId,
+              message: "SELECT_PERSONA_" + p.id
+            })
+          });
+        } catch(e) {}
+
+        // Add persona greeting
+        add("assistant", p.greetingMessage || "أهلاً بك! أنا " + p.roleName + ". كيف يمكنني مساعدتك؟");
+        
+        // Render persona specific suggestions
+        // A simple heuristic for suggestions based on description or general role
+        var specificSuggestions = [
+          "ما هي الأسئلة الشائعة حول " + p.roleName + "؟",
+          "أحتاج مساعدة في مهام " + p.roleName
+        ];
+        renderSuggestions(specificSuggestions);
+      });
+      sidebarBox.appendChild(icon);
+    });
+  }
+
   async function setOpen(value) {
     state.open = value;
     if (value) {
       panel.classList.add("open");
+      sidebarBox.classList.add("open");
       // Change toggle icon to X
       toggle.innerHTML = '<svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>';
       try {
@@ -635,6 +817,7 @@ export async function GET() {
       }
     } else {
       panel.classList.remove("open");
+      sidebarBox.classList.remove("open");
       // Revert toggle icon to chat bubble
       toggle.innerHTML = '<svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 9h12v2H6V9zm8 5H6v-2h8v2zm4-6H6V6h12v2z"/></svg>';
     }
@@ -740,6 +923,27 @@ export async function GET() {
 
   close.addEventListener("click", function() { setOpen(false); });
 
+  imageButton.addEventListener("click", function() {
+    imageInput.click();
+  });
+
+  imageInput.addEventListener("change", async function() {
+    var file = imageInput.files && imageInput.files[0];
+    imageInput.value = "";
+    if (!file) return;
+    if (!file.type || !file.type.startsWith("image/")) {
+      add("assistant", "من فضلك اختر صورة فقط.");
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      add("assistant", "حجم الصورة كبير. الحد الحالي 2MB.");
+      return;
+    }
+    var dataUrl = await fileToDataUrl(file);
+    state.attachments.push({ type: "image", name: file.name || "image", dataUrl: dataUrl, mimeType: file.type, size: file.size });
+    renderFiles();
+  });
+
   // Voice recording
   audioButton.addEventListener("click", async function() {
     try {
@@ -789,9 +993,11 @@ export async function GET() {
     renderFiles();
     
     var audioAtt = attachments.find(function(a) { return a.type === "audio"; });
+    var imageAtt = attachments.find(function(a) { return a.type === "image"; });
     var audioUrl = audioAtt ? audioAtt.dataUrl : null;
+    var imageUrl = imageAtt ? imageAtt.dataUrl : null;
     
-    add("user", text, audioUrl);
+    add("user", text, audioUrl, imageUrl);
     showTyping();
     
     try {

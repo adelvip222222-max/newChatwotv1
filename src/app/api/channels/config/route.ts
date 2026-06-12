@@ -8,7 +8,7 @@ import { encryptSecret } from "@/lib/crypto";
 
 const schema = z.object({
   botId: z.string().min(1),
-  type: z.enum(["website", "telegram", "whatsapp", "facebook", "webhook"]),
+  type: z.enum(["website", "telegram", "whatsapp", "facebook", "instagram", "email", "api", "webhook"]),
   name: z.string().min(2),
   isActive: z.boolean(),
   config: z.record(z.unknown()).default({})
@@ -61,39 +61,105 @@ export async function POST(request: Request) {
     }
 
     if (body.type === "whatsapp") {
-      const token = String(config.accessToken || "").trim();
-      delete config.accessToken;
+      const oauthToken = String(config.oauthToken || "").trim();
+      delete config.oauthToken;
       const previousConfig =
         existing?.config && typeof existing.config === "object"
           ? (existing.config as Record<string, unknown>)
           : {};
-      if (token) {
-        config.accessTokenEncrypted = encryptSecret(token);
+      if (oauthToken) {
+        config.accessTokenEncrypted = encryptSecret(oauthToken);
         config.tokenConfigured = true;
       } else if (previousConfig.accessTokenEncrypted) {
         config.accessTokenEncrypted = previousConfig.accessTokenEncrypted;
         config.tokenConfigured = true;
       }
+      config.oauthProviderAccountId = String(config.oauthProviderAccountId || previousConfig.oauthProviderAccountId || "").trim();
       config.phoneNumberId = String(config.phoneNumberId || previousConfig.phoneNumberId || "").trim();
       config.verifyToken = String(config.verifyToken || previousConfig.verifyToken || crypto.randomBytes(18).toString("hex")).trim();
     }
 
     if (body.type === "facebook") {
-      const token = String(config.pageAccessToken || "").trim();
-      delete config.pageAccessToken;
+      const oauthToken = String(config.oauthToken || "").trim();
+      delete config.oauthToken;
       const previousConfig =
         existing?.config && typeof existing.config === "object"
           ? (existing.config as Record<string, unknown>)
           : {};
-      if (token) {
-        config.pageAccessTokenEncrypted = encryptSecret(token);
+      if (oauthToken) {
+        config.pageAccessTokenEncrypted = encryptSecret(oauthToken);
         config.tokenConfigured = true;
       } else if (previousConfig.pageAccessTokenEncrypted) {
         config.pageAccessTokenEncrypted = previousConfig.pageAccessTokenEncrypted;
         config.tokenConfigured = true;
       }
+      config.oauthProviderAccountId = String(config.oauthProviderAccountId || previousConfig.oauthProviderAccountId || "").trim();
       config.pageId = String(config.pageId || previousConfig.pageId || "").trim();
       config.verifyToken = String(config.verifyToken || previousConfig.verifyToken || crypto.randomBytes(18).toString("hex")).trim();
+    }
+
+    if (body.type === "instagram") {
+      const oauthToken = String(config.oauthToken || "").trim();
+      delete config.oauthToken;
+      const previousConfig =
+        existing?.config && typeof existing.config === "object"
+          ? (existing.config as Record<string, unknown>)
+          : {};
+      if (oauthToken) {
+        config.accessTokenEncrypted = encryptSecret(oauthToken);
+        config.tokenConfigured = true;
+      } else if (previousConfig.accessTokenEncrypted) {
+        config.accessTokenEncrypted = previousConfig.accessTokenEncrypted;
+        config.tokenConfigured = true;
+      }
+      config.oauthProviderAccountId = String(config.oauthProviderAccountId || previousConfig.oauthProviderAccountId || "").trim();
+      config.accountId = String(config.accountId || previousConfig.accountId || "").trim();
+      config.verifyToken = String(config.verifyToken || previousConfig.verifyToken || crypto.randomBytes(18).toString("hex")).trim();
+    }
+
+    if (body.type === "email") {
+      const password = String(config.smtpPassword || "").trim();
+      delete config.smtpPassword;
+      const previousConfig =
+        existing?.config && typeof existing.config === "object"
+          ? (existing.config as Record<string, unknown>)
+          : {};
+      if (password) {
+        config.smtpPasswordEncrypted = encryptSecret(password);
+        config.passwordConfigured = true;
+      } else if (previousConfig.smtpPasswordEncrypted) {
+        config.smtpPasswordEncrypted = previousConfig.smtpPasswordEncrypted;
+        config.passwordConfigured = true;
+      }
+      config.emailAddress = String(config.emailAddress || previousConfig.emailAddress || "").trim();
+      config.smtpHost = String(config.smtpHost || previousConfig.smtpHost || "").trim();
+      config.smtpPort = String(config.smtpPort || previousConfig.smtpPort || "").trim();
+      config.smtpUser = String(config.smtpUser || previousConfig.smtpUser || "").trim();
+    }
+
+    if (body.type === "api") {
+      const apiKey = String(config.apiKey || "").trim();
+      delete config.apiKey;
+      const previousConfig =
+        existing?.config && typeof existing.config === "object"
+          ? (existing.config as Record<string, unknown>)
+          : {};
+      if (apiKey) {
+        config.apiKeyEncrypted = encryptSecret(apiKey);
+        config.tokenConfigured = true;
+      } else if (previousConfig.apiKeyEncrypted) {
+        config.apiKeyEncrypted = previousConfig.apiKeyEncrypted;
+        config.tokenConfigured = true;
+      }
+      config.allowedOrigin = String(config.allowedOrigin || previousConfig.allowedOrigin || "").trim();
+    }
+
+    if (body.type === "webhook") {
+      const previousConfig =
+        existing?.config && typeof existing.config === "object"
+          ? (existing.config as Record<string, unknown>)
+          : {};
+      config.signingSecret = String(config.signingSecret || previousConfig.signingSecret || crypto.randomBytes(24).toString("hex")).trim();
     }
 
     await Channel.findOneAndUpdate(

@@ -1,75 +1,60 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireSession } from "@/lib/auth";
 import { connectToDatabase } from "@/lib/mongodb";
 import { Ticket } from "@/lib/models";
-import { ensureTicketForConversation, type TicketCategory, type TicketPriority } from "@/lib/tickets";
+import { requireAuth } from "@/server/auth/guards";
 
-export async function GET() {
-  try {
-    const session = await requireSession();
-    await connectToDatabase();
+export async function GET(req: NextRequest) {
+  let session: any;
+  try { session = await requireAuth(); } catch { return NextResponse.json({ error: "Unauthorized" }, { status: 401 }); }
 
-    const tickets = await Ticket.find({ tenantId: session.user.tenantId })
-      .sort({ updatedAt: -1 })
-      .limit(100)
-      .lean();
-
-    return NextResponse.json({
-      tickets: tickets.map((ticket) => ({
-        id: ticket._id.toString(),
-        number: ticket.number,
-        subject: ticket.subject,
-        status: ticket.status,
-        priority: ticket.priority,
-        category: ticket.category,
-        conversationId: ticket.conversationId.toString(),
-        requesterExternalId: ticket.requesterExternalId,
-        channel: ticket.channel,
-        updatedAt: ticket.updatedAt?.toISOString() || "",
-      })),
-    });
-  } catch (error) {
-    console.error("tickets.get_failed", error);
-    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+  await connectToDatabase();
+  const { searchParams } = new URL(req.url);
+  const page = Math.max(1, Number(searchParams.get("page") || "1"));
+  const limit = Math.min(100, Math.max(1, Number(searchParams.get("limit") || "25")));
+  const skip = (page - 1) * limit;
+  const filter: Record<string, any> = { tenantId: session.user.tenantId };
+  const status = searchParams.get("status");
+  if (status) filter.status = status;
+  const priority = searchParams.get("priority");
+  if (priority) filter.priority = priority;
+  const assignedTo = searchParams.get("assignedTo");
+  if (assignedTo) filter.assignedTo = assignedTo;
+  if (searchParams.get("slaBreached") === "true") filter.slaBreached = true;
+  const q = searchParams.get("q");
+  if (q?.trim()) {
+    filter.$or = [
+      { title: { $regex: q, $options: "i" } },
+      { description: { $regex: q, $options: "i" } },
+      { category: { $regex: q, $options: "i" } }
+    ];
   }
+  const [tickets, total] = await Promise.all([
+    Ticket.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+    Ticket.countDocuments(filter)
+  ]);
+  return NextResponse.json({ tickets, total, page, limit });
 }
 
-export async function POST(request: NextRequest) {
-  try {
-    const session = await requireSession();
-    const body = await request.json();
-
-    if (!body.conversationId || !body.botId) {
-      return NextResponse.json({ error: "conversationId and botId are required" }, { status: 400 });
-    }
-
-    const ticket = await ensureTicketForConversation({
-      tenantId: session.user.tenantId,
-      botId: body.botId,
-      conversationId: body.conversationId,
-      triggerReason: body.triggerReason || "manual_ticket",
-      category: (body.category || "general") as TicketCategory,
-      priority: (body.priority || "medium") as TicketPriority,
-      subject: body.subject,
-      description: body.description,
-      source: "agent",
-      metadata: { createdFrom: "dashboard" },
-    });
-
-    return NextResponse.json({
-      success: true,
-      ticket: ticket
-        ? {
-            id: ticket._id.toString(),
-            number: ticket.number,
-            subject: ticket.subject,
-            status: ticket.status,
-          }
-        : null,
-    });
-  } catch (error) {
-    console.error("tickets.create_failed", error);
-    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
-  }
+export async function POST(req: NextRequest) {
+  let session: any;
+  try { session = await requireAuth(); } catch { return NextResponse.json({ error: "Unauthorized" }, { status: 401 }); }
+  await connectToDatabase();
+  const body = await req.json();
+  if (!body.title?.trim()) return NextResponse.json({ error: "Ticket title is required." }, { status: 400 });
+  const ticket = await Ticket.create({
+    tenantId: session.user.tenantId,
+    contactId: body.contactId,
+    conversationId: body.conversationId,
+    title: body.title.trim(),
+    description: body.description || "",
+    status: body.status || "open",
+    priority: body.priority || "medium",
+    category: body.category || "",
+    assignedTo: body.assignedTo,
+    teamId: body.teamId,
+    dueAt: body.dueAt,
+    tags: body.tags || [],
+    customFields: body.customFields || {}
+  });
+  return NextResponse.json({ ticket }, { status: 201 });
 }
-

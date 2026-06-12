@@ -1,82 +1,59 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { connectToDatabase } from "@/lib/mongodb";
-import {
-  createChannelReply,
-  findActiveChannel,
-  logWebhook,
-  sendFacebookMessage
-} from "@/lib/channel-service";
-import { decryptSecret } from "@/lib/crypto";
+import { Channel } from "@/lib/models";
+import { safeJsonError } from "@/lib/api-security";
+import { enqueueInboundWebhook } from "@/server/channels/webhookIngress";
 
-type MessengerPayload = {
-  entry?: Array<{
-    id?: string;
-    messaging?: Array<{
-      sender?: { id?: string };
-      message?: { text?: string };
-    }>;
-  }>;
-};
-
-export async function GET(request: Request) {
-  await connectToDatabase();
+export async function GET(request: NextRequest) {
   const url = new URL(request.url);
   const mode = url.searchParams.get("hub.mode");
   const token = url.searchParams.get("hub.verify_token");
   const challenge = url.searchParams.get("hub.challenge");
 
-  if (!token || !challenge || mode !== "subscribe") {
-    return NextResponse.json({ error: "فشل التحقق من Messenger." }, { status: 403 });
+  if (mode !== "subscribe" || !token || !challenge) {
+    return new NextResponse("Bad Request", { status: 400 });
   }
 
-  const channel = await findActiveChannel("facebook", { "config.verifyToken": token });
-  if (!channel) return NextResponse.json({ error: "Verify token غير مطابق لأي مستأجر." }, { status: 403 });
-  return new Response(challenge);
+  await connectToDatabase();
+  const channel = await Channel.findOne({
+    type: { $in: ["facebook", "instagram"] },
+    "config.verifyToken": token,
+    isActive: true
+  });
+
+  if (!channel && token !== process.env.FACEBOOK_VERIFY_TOKEN) {
+    return new NextResponse("Forbidden", { status: 403 });
+  }
+
+  return new NextResponse(challenge, { status: 200 });
 }
 
-export async function POST(request: Request) {
-  const payload = (await request.json()) as MessengerPayload;
-  let tenantId: string | undefined;
-  let botId: string | undefined;
-
+export async function POST(request: NextRequest) {
   try {
-    await connectToDatabase();
-    const pageId = payload.entry?.[0]?.id;
-    const channel = pageId
-      ? await findActiveChannel("facebook", { "config.pageId": pageId })
-      : await findActiveChannel("facebook");
-    if (!channel) throw new Error("لا توجد قناة Messenger مفعلة لهذا المستأجر.");
-
-    tenantId = channel.tenantId.toString();
-    botId = channel.botId.toString();
-    const config = (channel.config || {}) as Record<string, unknown>;
-    const pageToken = decryptSecret(String(config.pageAccessTokenEncrypted || "")) || process.env.FACEBOOK_PAGE_ACCESS_TOKEN || "";
-    await logWebhook({ channel: "facebook", payload, tenantId, botId });
-
-    const event = payload.entry?.[0]?.messaging?.[0];
-    const senderId = event?.sender?.id;
-    const text = event?.message?.text;
-    if (!senderId || !text) {
-      return NextResponse.json({ ok: true, ignored: true });
+    const rawBody = await request.text();
+    let payload: Record<string, any>;
+    try {
+      payload = JSON.parse(rawBody);
+    } catch {
+      return new NextResponse("Bad Request", { status: 400 });
     }
 
-    const result = await createChannelReply({
-      type: "facebook",
-      tenantId,
-      botId,
-      externalUserId: senderId,
-      message: text,
-      metadata: payload
+    const provider = payload.object === "instagram" ? "instagram" : "facebook";
+
+    const result = await enqueueInboundWebhook({
+      provider,
+      request,
+      payload,
+      rawBody
     });
 
-    await sendFacebookMessage(senderId, result.reply, pageToken);
-    await logWebhook({ channel: "facebook", payload, status: "success", tenantId, botId });
-    return NextResponse.json({ ok: true });
+    if (!result.ok) {
+      const status = result.status || 400;
+      return new NextResponse(result.error || "Bad Request", { status });
+    }
+
+    return new NextResponse("EVENT_RECEIVED", { status: 200 });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Messenger webhook error";
-    await logWebhook({ channel: "facebook", payload, status: "error", error: message, tenantId, botId }).catch(
-      () => null
-    );
-    return NextResponse.json({ error: message }, { status: 400 });
+    return safeJsonError(error, "Webhook processing failed.", 400);
   }
 }

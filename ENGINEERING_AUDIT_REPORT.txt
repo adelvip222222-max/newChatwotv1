@@ -1,0 +1,496 @@
+تقرير الفحص الهندسي لنظام Chatzi CRM SaaS
+تاريخ الفحص: 2026-06-09
+المسار: /opt/chatzi/app
+
+ملاحظة: هذا التقرير مبني على فحص فعلي للكود. لم يتم تعديل الكود أثناء إعداد التقرير.
+
+============================================================
+1. Redis و BullMQ
+============================================================
+
+الحالة: جزئي / غير مكتمل
+
+الأدلة:
+- Redis موجود ومستخدم فعليا عبر ioredis:
+  - package.json: dependencies تحتوي ioredis.
+  - src/lib/redis-connection.ts: دالة createRedisConnection.
+  - src/lib/redis.ts: إنشاء اتصال redis مشترك.
+
+- BullMQ موجود ومستخدم فعليا:
+  - package.json: dependencies تحتوي bullmq.
+  - src/lib/queues/index.ts: تعريف Queues.
+  - src/server/channels/outboundQueue.ts: تعريف outboundQueue.
+  - workers/ingress-worker.ts: تعريف Worker.
+
+أسماء الطوابير:
+- ingress-queue
+- core-routing-queue
+- egress-queue
+- outbound-messages
+
+تعريف الطوابير:
+- src/lib/queues/index.ts:
+  - ingressQueue = new Queue("ingress-queue")
+  - coreRoutingQueue = new Queue("core-routing-queue")
+  - egressQueue = new Queue("egress-queue")
+- src/server/channels/outboundQueue.ts:
+  - outboundQueue = new Queue("outbound-messages")
+
+الـ Workers:
+- يوجد Worker مستقل لـ ingress:
+  - workers/ingress-worker.ts
+  - new Worker("ingress-queue", ...)
+- يوجد outboundWorker:
+  - src/server/channels/outboundWorker.ts
+  - new Worker("outbound-messages", ...)
+
+التشغيل:
+- ecosystem.config.js يشغل:
+  - chatzi-web
+  - worker-ingress
+- لا يوجد npm script لتشغيل ingress worker.
+- لا يوجد تشغيل PM2 واضح لـ outboundWorker.
+- لا يوجد Dockerfile أو docker-compose.yml.
+
+Retry/backoff/failure handling:
+- outboundQueue يحتوي attempts: 3 و exponential backoff:
+  - src/server/channels/outboundQueue.ts
+- ingressQueue في /api/webhooks/whatsapp لا يحتوي attempts/backoff.
+- يوجد failed event logging فقط:
+  - workers/ingress-worker.ts
+  - src/server/channels/outboundWorker.ts
+
+Dead-letter/failed jobs monitoring:
+- غير موجود بشكل واضح.
+- لا توجد DLQ.
+- لا توجد لوحة مراقبة failed jobs.
+
+معالجة AI:
+- ليست داخل BullMQ بشكل موحد.
+- src/server/channels/incomingPipeline.ts يستدعي generateAiReply مباشرة داخل مسار webhook.
+- src/app/api/channels/webhook/message/route.ts يستدعي generateAiReply مباشرة.
+
+الخطر العملي:
+- احتمال بطء webhooks بسبب AI.
+- تراكم jobs في core-routing-queue لأن worker الخاص بها غير موجود.
+- outboundWorker موجود بالكود لكنه غير مشغل في PM2.
+- غياب DLQ يجعل فشل jobs صعب الاكتشاف.
+
+الأولوية: Critical
+
+التعديل المطلوب بالترتيب:
+1. تشغيل outboundWorker عبر PM2 أو npm script.
+2. إنشاء core-routing-worker.
+3. نقل AI إلى queue/worker.
+4. إضافة attempts/backoff لكل queues.
+5. إضافة DLQ أو failed-job collection.
+6. إضافة مراقبة queue health.
+
+============================================================
+2. Webhooks
+============================================================
+
+الحالة: جزئي / غير موحد
+
+المسارات المفحوصة:
+- src/app/api/webhooks/whatsapp/route.ts
+- src/app/api/channels/whatsapp/webhook/route.ts
+- src/app/api/channels/facebook/webhook/route.ts
+- src/app/api/channels/telegram/webhook/route.ts
+- src/app/api/channels/webhook/message/route.ts
+- src/app/api/widget/message/route.ts
+
+الأدلة:
+- /api/webhooks/whatsapp:
+  - يتحقق من x-hub-signature-256.
+  - يضيف job إلى ingressQueue.
+  - يرجع 200 بسرعة.
+
+- /api/channels/whatsapp/webhook:
+  - يتحقق من x-hub-signature-256.
+  - يستدعي handleIncomingChannelMessage مباشرة.
+  - لا يضيف job إلى BullMQ.
+
+- /api/channels/facebook/webhook:
+  - يتحقق من x-hub-signature-256.
+  - يستدعي handleIncomingChannelMessage مباشرة.
+  - لا يضيف job إلى BullMQ.
+
+- /api/channels/telegram/webhook:
+  - يستدعي handleIncomingChannelMessage مباشرة.
+  - يعتمد على Telegram secret داخل adapter.
+  - لا يضيف job إلى BullMQ.
+
+- /api/channels/webhook/message:
+  - يتحقق من Bearer أو HMAC.
+  - يستدعي generateAiReply مباشرة داخل route handler.
+  - لا يستخدم BullMQ.
+
+- /api/widget/message:
+  - يستدعي handleIncomingChannelMessage مباشرة.
+  - ينتظر نتيجة AI ويرجع reply.
+
+Duplicate/idempotency:
+- WebhookEvent يحتوي unique index:
+  - src/lib/models/webhook-event.ts
+  - index({ provider: 1, externalEventId: 1 }, { unique: true })
+- pipeline يفحص duplicate:
+  - src/server/channels/incomingPipeline.ts
+  - WebhookEvent.findOne({ provider, externalEventId })
+- Message لديه index غير unique:
+  - src/lib/models/message.ts
+  - index({ tenantId: 1, provider: 1, externalMessageId: 1 })
+- /api/webhooks/whatsapp لا يسجل WebhookEvent قبل enqueue ولا يضع jobId idempotency.
+
+الخطر العملي:
+- provider retries قد تنتج تكرار رسائل.
+- مسارات القنوات قد تتأخر بسبب AI.
+- فشل AI قد يؤثر على response للـ webhook.
+
+الأولوية: Critical
+
+التعديل المطلوب بالترتيب:
+1. توحيد جميع webhook routes على نمط save + enqueue + 200.
+2. إنشاء idempotency key من provider event id.
+3. استخدام BullMQ jobId لمنع التكرار.
+4. جعل Message externalMessageId unique جزئيا.
+5. نقل handleIncomingChannelMessage إلى worker.
+
+============================================================
+3. Real-time
+============================================================
+
+الحالة: غير موجود
+
+الأدلة:
+- لا توجد dependencies لـ socket.io أو ws أو pusher.
+- لا يوجد WebSocket أو SSE أو EventSource في الكود.
+- src/app/dashboard/conversations/page.tsx يجلب البيانات server-side فقط.
+- src/app/dashboard/conversations/InboxClientUI.tsx لا يحتوي polling أو socket.
+- src/app/dashboard/inbox/page.tsx يعرض بيانات server component ثابتة.
+
+الأحداث المطلوبة:
+- newMessage: غير موجود.
+- conversationUpdated: غير موجود.
+- typing: غير موجود كبث حقيقي. الموجود فقط typing indicator محلي في widget.
+- assignmentChanged: غير موجود.
+
+Multi-instance:
+- غير مدعوم.
+- لا يوجد Redis adapter.
+
+الخطر العملي:
+- واجهة المحادثات لا تتحدث تلقائيا.
+- الوكيل يحتاج refresh لرؤية الرسائل الجديدة.
+- لا يوجد realtime صالح للإنتاج مع أكثر من instance.
+
+الأولوية: High
+
+التعديل المطلوب بالترتيب:
+1. اختيار Socket.IO أو Pusher أو SSE.
+2. إضافة broadcast عند إنشاء Message.
+3. إضافة broadcast عند تحديث Conversation.
+4. إضافة Redis adapter في حالة Socket.IO.
+5. ربط InboxClientUI بتحديثات realtime.
+
+============================================================
+4. Agent Routing / Human Handoff
+============================================================
+
+الحالة: جزئي
+
+الأدلة:
+- src/lib/models/conversation.ts يحتوي:
+  - assigneeId
+  - teamId
+  - status
+  - priority
+  - aiPaused
+  - mode
+- لا يحتوي بالأسماء المطلوبة:
+  - assignedAgentId
+  - assignedTeamId
+  - assignedAt
+
+Human handoff:
+- src/server/channels/incomingPipeline.ts يحتوي HANDOVER_KEYWORDS.
+- عند وجود keyword:
+  - conversation.mode = "human"
+  - conversation.aiPaused = true
+  - aiPausedReason = "handover_requested"
+
+توقف AI:
+- src/lib/ai.ts:
+  - إذا conversation.status === "closed" أو mode === "human" أو aiPaused يرجع بدون رد.
+
+تدخل الوكيل:
+- src/app/api/conversations/[id]/messages/route.ts:
+  - عند رد agent يتم تحويل mode إلى human.
+  - يتم ضبط aiPaused = true.
+
+زر/API للتحويل:
+- src/components/dashboard/conversation-viewer.tsx يحتوي زر "تحويل لموظف".
+- src/app/api/conversations/[id]/status/route.ts يقبل status = "human".
+- لكن Conversation schema لا يسمح status = "human"، بل يسمح:
+  - open
+  - resolved
+  - closed
+  - snoozed
+
+الخطر العملي:
+- زر التحويل قد يفشل بسبب enum mismatch.
+- لا يوجد assignment حقيقي.
+- لا يوجد Round Robin أو Skill-based routing.
+
+الأولوية: High
+
+التعديل المطلوب بالترتيب:
+1. فصل status عن mode بشكل واضح.
+2. إصلاح API status ليحدث mode عند human/ai.
+3. إضافة assignedAgentId أو توحيد الاسم مع assigneeId.
+4. إضافة assignedAt.
+5. إضافة manual assignment API.
+6. إضافة round-robin/skill-based routing worker.
+
+============================================================
+5. AI Processing Architecture
+============================================================
+
+الحالة: جزئي / synchronous
+
+الأدلة:
+- generateAiReply:
+  - src/lib/ai.ts
+- يتم استدعاؤه مباشرة من:
+  - src/server/channels/incomingPipeline.ts
+  - src/app/api/channels/webhook/message/route.ts
+  - src/app/api/ai/route.ts
+  - src/lib/channel-service.ts
+
+Provider abstraction:
+- src/lib/ai-router.ts يحتوي routeAiRequest.
+- يدعم:
+  - openai
+  - anthropic
+  - gemini
+  - openrouter
+  - deepseek
+  - xai
+  - groq
+  - ollama
+
+Fallback provider:
+- موجود جزئيا.
+- routeAiRequest يجرب providers حسب priority وينتقل للتالي عند الفشل.
+
+Rate limiting:
+- موجود in-memory فقط:
+  - src/lib/rate-limit.ts
+- ليس موزعا عبر Redis.
+- ليس rate limit خاصا بالـ AI provider أو tenant.
+
+Timeout handling:
+- غير موجود.
+- لا يوجد AbortController أو Promise.race في src/lib/ai-router.ts.
+
+API keys:
+- AiProvider.apiKeyEncrypted مشفر:
+  - src/lib/models/ai-provider.ts
+  - src/app/api/admin/ai-providers/route.ts
+- AiModel.apiKeyEncrypted مشفر:
+  - src/lib/models/ai-model.ts
+  - src/app/api/admin/ai-models/route.ts
+- لكن AiSetting يحتوي apiKey خام:
+  - src/lib/models/ai-setting.ts
+
+الخطر العملي:
+- AI قد يعلق request.
+- webhook response قد يتأخر أو يفشل.
+- rate limit غير صالح مع أكثر من instance.
+- وجود apiKey خام في AiSetting خطر أمني.
+
+الأولوية: Critical
+
+التعديل المطلوب بالترتيب:
+1. إنشاء AI processing queue.
+2. نقل generateAiReply إلى worker.
+3. إضافة timeout لكل provider call.
+4. إضافة provider circuit breaker.
+5. نقل rate limiting إلى Redis.
+6. إزالة أو تشفير AiSetting.apiKey.
+
+============================================================
+6. Multi-tenancy
+============================================================
+
+الحالة: جزئي
+
+الأدلة:
+- معظم models تحتوي tenantId:
+  - src/lib/models/conversation.ts
+  - src/lib/models/message.ts
+  - src/lib/models/channel.ts
+  - src/lib/models/contact.ts
+  - src/lib/models/user.ts
+  - src/lib/models/knowledge-document.ts
+
+استعلامات جيدة:
+- src/app/api/conversations/[id]/messages/route.ts يبحث بـ _id و tenantId.
+- src/app/api/users/route.ts يبحث بـ tenantId.
+- src/lib/knowledge.ts يستخدم tenantId في أغلب الاستعلامات.
+
+مخاطر:
+- src/lib/models/ai-provider.ts لا يحتوي tenantId، وهو global.
+- src/app/api/widget/start/route.ts:
+  - Bot.findOne({ _id: body.botId, isActive: true }) بدون tenant/session.
+  - KnowledgeDocument.find({ botId: bot._id, status: "ready" }) بدون tenantId.
+- src/server/channels/outboundWorker.ts:
+  - Channel.findById(channelId) بدون tenantId.
+- src/server/channels/incomingPipeline.ts:
+  - Contact.findById(identity.contactId) بدون tenantId.
+
+Middleware/helper:
+- لا يوجد helper يفرض tenantId على كل query.
+- يوجد assertTenantAccess فقط عند استخدامه يدويا:
+  - src/lib/api-security.ts
+
+Subdomain tenants:
+- غير موجود.
+- src/middleware.ts يعتمد على session/role وليس subdomain tenant resolution.
+
+الخطر العملي:
+- احتمال تسريب بيانات بين tenants عند استخدام ObjectId أو job payload غير موثوق.
+
+الأولوية: High
+
+التعديل المطلوب بالترتيب:
+1. إنشاء tenant-scoped repository/helper.
+2. مراجعة كل findById داخل workers.
+3. إضافة tenantId لكل worker payload والتحقق منه.
+4. تقييد endpoints العامة مثل widget.
+5. تحديد إن كان AiProvider global مقصودا أو يجب عزله بالـ tenant.
+
+============================================================
+7. Production Deployment
+============================================================
+
+الحالة: جزئي
+
+الأدلة:
+- package.json scripts:
+  - dev
+  - build
+  - start
+  - lint
+  - test
+  - queue:requeue-outbound
+- لا يوجد script لتشغيل ingress worker.
+- لا يوجد script لتشغيل outbound worker.
+
+PM2:
+- ecosystem.config.js موجود.
+- يشغل chatzi-web.
+- يشغل worker-ingress.
+- لا يشغل outboundWorker.
+- لا يشغل coreRouting worker أو AI worker.
+
+Docker:
+- لا يوجد Dockerfile.
+- لا يوجد docker-compose.yml.
+
+Redis/Mongo:
+- لا يتم تشغيلهما من المشروع.
+- DEPLOYMENT.md يفترض:
+  - MONGODB_URI=mongodb://127.0.0.1:27017/chatzi
+  - REDIS_URL=redis://127.0.0.1:6379
+
+Health checks:
+- يوجد Redis health فقط:
+  - src/app/api/health/redis/route.ts
+- لا يوجد Mongo health.
+- لا يوجد queue health.
+- لا يوجد worker health.
+
+Logging:
+- logging موجود عبر console.log / console.error فقط.
+- لا يوجد structured logging.
+- لا يوجد correlation id.
+
+الخطر العملي:
+- الإنتاج قد يعمل بدون outbound delivery.
+- لا يمكن معرفة توقف worker بسهولة.
+- لا توجد مراقبة فعلية للـ queues.
+
+الأولوية: High
+
+التعديل المطلوب بالترتيب:
+1. إضافة npm scripts لكل worker.
+2. تحديث ecosystem.config.js لتشغيل كل workers.
+3. إضافة health checks شاملة.
+4. إضافة structured logging.
+5. إضافة Docker/Docker Compose أو توثيق systemd services.
+
+============================================================
+ملاحظة حرجة: ازدواج نماذج Conversation و Message
+============================================================
+
+الحالة: Critical
+
+الأدلة:
+- توجد نماذج قديمة:
+  - src/models/Conversation.ts
+  - src/models/Message.ts
+- توجد نماذج حديثة:
+  - src/lib/models/conversation.ts
+  - src/lib/models/message.ts
+
+المشكلة:
+- workers/ingress-worker.ts يستخدم النماذج القديمة:
+  - import { Conversation } from "../src/models/Conversation"
+  - import { Message } from "../src/models/Message"
+- باقي النظام يستخدم غالبا:
+  - "@/lib/models"
+
+الخطر العملي:
+- رسائل WhatsApp من /api/webhooks/whatsapp قد تكتب بصيغة لا تقرأها واجهة inbox الحديثة.
+- منطق AI والواجهة قد يتعاملان مع schema مختلف.
+
+الأولوية: Critical
+
+التعديل المطلوب:
+1. توحيد النموذج على src/lib/models فقط.
+2. تعديل ingress-worker لاستخدام النموذج الحديث.
+3. عمل migration للبيانات إن وجدت بيانات بالصيغة القديمة.
+4. حذف أو عزل src/models القديمة بعد التأكد.
+
+============================================================
+الجدول المختصر
+============================================================
+
+| المجال | الحالة | الدليل من الكود | الخطر | الأولوية | الإجراء المطلوب |
+| ------ | ------ | --------------- | ----- | -------- | --------------- |
+| Redis/BullMQ | جزئي | src/lib/queues, workers/ingress-worker, outboundQueue | Queues بلا workers كاملة وغياب DLQ | Critical | Workers لكل queue + retry/DLQ/monitoring |
+| Webhooks | جزئي | channels/*/webhook تستدعي pipeline مباشر | بطء وتكرار وفشل ACK | Critical | Save + enqueue + 200 فقط |
+| AI Processing | جزئي | incomingPipeline وroutes تستدعي generateAiReply | timeout داخل webhook | Critical | AI worker async + timeout/rate limit |
+| Real-time | غير موجود | لا Socket/SSE/Pusher، UI server fetch فقط | لا تحديث تلقائي | High | Realtime layer + Redis adapter |
+| Human Handoff | جزئي | mode/aiPaused موجود، API status متعارض | زر التحويل قد يفشل | High | فصل status عن mode وإضافة assignment |
+| Multi-tenancy | جزئي | معظم queries tenant-scoped، لكن بعض worker/widget queries لا | تسريب بيانات محتمل | High | Tenant-scoped query helpers |
+| Deployment | جزئي | PM2 يشغل ingress فقط، لا Docker | مكونات غير مشغلة | High | scripts/PM2/Docker + health شامل |
+| Secrets | جزئي | AiProvider مشفر، AiSetting.apiKey خام | تسريب مفاتيح | High | إزالة/تشفير الحقل الخام |
+| Outbound Delivery | جزئي | queue وworker موجودان، worker غير مشغل | رسائل agents قد لا ترسل | High | تشغيل outbound worker |
+| Duplicate Handling | جزئي | WebhookEvent unique، Message index غير unique | تكرار رسائل | High | idempotency/jobId وunique message index |
+
+============================================================
+ترتيب تنفيذ عملي من 10 خطوات للوصول إلى Production Ready
+============================================================
+
+1. توحيد نماذج Conversation و Message وإزالة استخدام src/models القديم من workers.
+2. جعل كل webhooks تعمل بنمط verify signature ثم سجل WebhookEvent ثم enqueue ثم 200.
+3. إنشاء core-routing-worker لمعالجة core-routing-queue.
+4. إنشاء ai-processing-queue و AI worker ونقل generateAiReply خارج routes والـ pipeline.
+5. تشغيل outboundWorker فعليا عبر PM2/npm script وإصلاح channelId المرسل له.
+6. إضافة retry/backoff لكل queues وDLQ أو failed-job collection مع alerting.
+7. إضافة unique indexes للرسائل حسب tenantId/provider/externalMessageId مع partial unique واستخدام BullMQ jobId.
+8. إصلاح handoff بفصل mode عن status وإضافة assignedAgentId/assignedTeamId/assignedAt.
+9. إضافة realtime layer لأحداث newMessage وconversationUpdated وtyping وassignmentChanged مع Redis adapter عند multi-instance.
+10. إكمال production deployment: PM2 لكل workers، health checks لـ Mongo/Redis/queues/workers، structured logs، وتوثيق Redis/Mongo كخدمات منفصلة أو Docker Compose.

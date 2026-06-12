@@ -1,34 +1,36 @@
 import { requireSession } from "@/lib/auth";
 import { getTenantSummary } from "@/lib/dashboard-data";
+import { getLocale } from "@/lib/i18n";
 import { PageHeader } from "@/components/dashboard/page-header";
+import { SettingsForm } from "@/components/dashboard/settings-form";
 
 export default async function SettingsPage() {
   const session = await requireSession();
   const summary = await getTenantSummary(session.user.tenantId);
+  const locale = await getLocale();
+  const isAr = locale === "ar";
+
+  const initialData = {
+    userName: session.user.name || "",
+    userEmail: session.user.email || "",
+    tenantName: summary.tenantName || "",
+    userRole: session.user.role || "viewer",
+  };
 
   return (
-    <>
-      <PageHeader title="الإعدادات" description="معلومات المستأجر والحساب الحالي." />
-      <section className="panel max-w-3xl p-5">
-        <dl className="grid gap-4 md:grid-cols-2">
-          <div>
-            <dt className="text-sm text-slate-500">اسم المستأجر</dt>
-            <dd className="mt-1 font-semibold text-ink">{summary.tenantName}</dd>
-          </div>
-          <div>
-            <dt className="text-sm text-slate-500">Tenant ID</dt>
-            <dd className="mt-1 break-all font-mono text-sm text-ink" dir="ltr">{session.user.tenantId}</dd>
-          </div>
-          <div>
-            <dt className="text-sm text-slate-500">المستخدم</dt>
-            <dd className="mt-1 font-semibold text-ink">{session.user.name}</dd>
-          </div>
-          <div>
-            <dt className="text-sm text-slate-500">الدور</dt>
-            <dd className="mt-1 font-semibold text-ink">{session.user.role}</dd>
-          </div>
-        </dl>
-      </section>
-    </>
+    <div className="max-w-4xl">
+      <PageHeader
+        title={isAr ? "الإعدادات" : "Settings"}
+        description={isAr ? "إدارة إعدادات الحساب الشخصي ومساحة العمل الخاصة بك." : "Manage your personal account and workspace settings."}
+      />
+      
+      <div className="mt-6">
+        <SettingsForm initialData={initialData} />
+      </div>
+
+      <div className="mt-8 text-xs text-slate-500 dark:text-slate-400">
+        <p>Tenant ID: <span className="font-mono bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded ml-1" dir="ltr">{session.user.tenantId}</span></p>
+      </div>
+    </div>
   );
 }

@@ -1,4 +1,4 @@
-import Stripe from "stripe";
+import type { Stripe } from "stripe";
 import { Types } from "mongoose";
 import {
   BillingPlan,
@@ -21,6 +21,12 @@ function getInvoiceSubscriptionId(invoice: Stripe.Invoice) {
   const subscription = invoice.parent?.subscription_details?.subscription;
   if (!subscription) return null;
   return typeof subscription === "string" ? subscription : subscription.id;
+}
+
+function assertValidObjectId(value: string, label: string) {
+  if (!Types.ObjectId.isValid(value)) {
+    throw new Error(`${label} is invalid.`);
+  }
 }
 
 export async function getBillingCatalog(tenantId: string) {
@@ -118,6 +124,10 @@ export async function createStripeCheckout(input: {
   itemId: string;
 }) {
   await connectToDatabase();
+  assertValidObjectId(input.tenantId, "Tenant id");
+  assertValidObjectId(input.userId, "User id");
+  assertValidObjectId(input.itemId, "Billing item id");
+
   const stripe = getStripe();
 
   const mode = input.kind === "plan" ? "subscription" : "payment";
@@ -204,12 +214,18 @@ export async function handleStripeEvent(event: Stripe.Event) {
   const exists = await PaymentEvent.exists({ stripeEventId: eventIdToTrack });
   if (exists) return;
 
-  const paymentEvent = await PaymentEvent.create({
-    stripeEventId: eventIdToTrack,
-    type: event.type,
-    payload: event,
-    status: "received"
-  });
+  let paymentEvent;
+  try {
+    paymentEvent = await PaymentEvent.create({
+      stripeEventId: eventIdToTrack,
+      type: event.type,
+      payload: event,
+      status: "received"
+    });
+  } catch (error: any) {
+    if (error?.code === 11000) return;
+    throw error;
+  }
 
   try {
     if (event.type === "checkout.session.completed") {
@@ -238,11 +254,22 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
   const kind = session.metadata?.kind;
   const itemId = session.metadata?.itemId;
   if (!tenantId || !kind || !itemId) return;
+  if (!Types.ObjectId.isValid(tenantId) || !Types.ObjectId.isValid(itemId)) return;
 
   if (kind === "plan") {
-    const plan = await BillingPlan.findOne({ _id: itemId });
+    const plan = await BillingPlan.findOne({
+      _id: itemId,
+      $or: [{ tenantId: null }, { tenantId }, { tenantId: { $exists: false } }],
+      createdByAdmin: true,
+      isActive: true
+    });
     if (!plan) return;
     const stripeSubscriptionId = typeof session.subscription === "string" ? session.subscription : "";
+    const stripeSubscription = stripeSubscriptionId
+      ? await getStripe().subscriptions.retrieve(stripeSubscriptionId)
+      : null;
+    const currentPeriodEnd = stripeSubscription ? getSubscriptionPeriodEnd(stripeSubscription) : null;
+
     await TenantSubscription.findOneAndUpdate(
       { tenantId },
       {
@@ -251,9 +278,10 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
           planId: plan._id,
           stripeCustomerId: typeof session.customer === "string" ? session.customer : "",
           stripeSubscriptionId,
-          status: "active",
+          status: stripeSubscription?.status || "active",
           monthlyMessageLimit: plan.aiMessageLimit,
-          usedMessages: 0
+          usedMessages: 0,
+          ...(currentPeriodEnd ? { currentPeriodEnd } : {})
         }
       },
       { upsert: true, new: true }
@@ -261,7 +289,14 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
   }
 
   if (kind === "pack") {
-    const pack = await MessagePack.findOne({ _id: itemId });
+    if (session.payment_status !== "paid") return;
+
+    const pack = await MessagePack.findOne({
+      _id: itemId,
+      $or: [{ tenantId: null }, { tenantId }, { tenantId: { $exists: false } }],
+      createdByAdmin: true,
+      isActive: true
+    });
     if (!pack) return;
     await TenantSubscription.findOneAndUpdate(
       { tenantId },
@@ -336,8 +371,9 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
   }
 }
 
-export async function completeStripeCheckout(sessionId: string) {
+export async function completeStripeCheckout(sessionId: string, tenantId: string) {
   await connectToDatabase();
+  assertValidObjectId(tenantId, "Tenant id");
   
   const exists = await PaymentEvent.exists({ stripeEventId: sessionId });
   if (exists) return;
@@ -345,9 +381,19 @@ export async function completeStripeCheckout(sessionId: string) {
   const stripe = getStripe();
   try {
     const session = await stripe.checkout.sessions.retrieve(sessionId);
-    if (session.payment_status === "paid" || session.status === "complete") {
+    const sessionTenantId = session.metadata?.tenantId || session.client_reference_id;
+    if (sessionTenantId !== tenantId) {
+      throw new Error("Checkout session does not belong to this tenant.");
+    }
+
+    const canComplete =
+      session.payment_status === "paid" ||
+      (session.mode === "subscription" && session.status === "complete" && !!session.subscription);
+
+    if (canComplete) {
       const paymentEvent = await PaymentEvent.create({
         stripeEventId: sessionId,
+        tenantId,
         type: "checkout.session.completed.manual",
         payload: session,
         status: "received"

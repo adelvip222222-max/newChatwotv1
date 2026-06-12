@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Save, Send } from "lucide-react";
+import { useI18n } from "@/components/i18n-provider";
 import { DEFAULT_SYSTEM_PROMPT } from "@/lib/strings";
 
 type AiSettingsFormProps = {
@@ -23,7 +24,87 @@ type AiSettingsFormProps = {
   };
 };
 
+const fallbackAr = "عذرًا، لم أفهم طلبك جيدًا. هل يمكنك التوضيح؟";
+const fallbackEn = "Sorry, I did not fully understand your request. Could you clarify?";
+
+const copy = {
+  ar: {
+    bot: "البوت",
+    model: "نموذج AI",
+    language: "لغة البوت",
+    role: "وظيفة البوت",
+    tone: "نبرة الحديث",
+    responseLength: "طول الإجابة",
+    systemPrompt: "التعليمات المخصصة الإضافية (System Prompt)",
+    fallback: "رسالة الاعتذار (Fallback Message)",
+    emojis: "استخدام الرموز التعبيرية (Emojis)",
+    enabled: "تفعيل الذكاء الاصطناعي",
+    save: "حفظ الإعدادات",
+    test: "اختبار الرسالة",
+    saved: "تم حفظ إعدادات AI.",
+    saveError: "تعذر حفظ إعدادات AI.",
+    testing: "جاري اختبار النموذج...",
+    testMessage: "اختبر إعدادات ChatZi برسالة قصيرة.",
+    noReply: "لم يصل رد.",
+    testError: "فشل اختبار الرسالة.",
+    auto: "تلقائي (حسب لغة العميل)",
+    arabic: "العربية",
+    english: "الإنجليزية",
+    assistant: "مساعد عام",
+    customerService: "خدمة عملاء",
+    techSupport: "دعم فني",
+    sales: "مبيعات",
+    receptionist: "موظف استقبال",
+    neutral: "حيادي / موضوعي",
+    formal: "رسمي / احترافي",
+    casual: "ودي / غير رسمي",
+    playful: "مرح / لطيف",
+    empathetic: "متعاطف / متفهم",
+    short: "قصير ومختصر",
+    medium: "متوسط",
+    long: "طويل ومفصل"
+  },
+  en: {
+    bot: "Bot",
+    model: "AI model",
+    language: "Bot language",
+    role: "Bot role",
+    tone: "Conversation tone",
+    responseLength: "Response length",
+    systemPrompt: "Additional custom instructions (System Prompt)",
+    fallback: "Fallback message",
+    emojis: "Use emojis",
+    enabled: "Enable AI",
+    save: "Save settings",
+    test: "Test message",
+    saved: "AI settings saved.",
+    saveError: "Unable to save AI settings.",
+    testing: "Testing model...",
+    testMessage: "Test ChatZi settings with a short message.",
+    noReply: "No reply received.",
+    testError: "Message test failed.",
+    auto: "Auto (customer language)",
+    arabic: "Arabic",
+    english: "English",
+    assistant: "General assistant",
+    customerService: "Customer service",
+    techSupport: "Technical support",
+    sales: "Sales",
+    receptionist: "Receptionist",
+    neutral: "Neutral / objective",
+    formal: "Formal / professional",
+    casual: "Friendly / casual",
+    playful: "Playful / light",
+    empathetic: "Empathetic / understanding",
+    short: "Short and concise",
+    medium: "Medium",
+    long: "Long and detailed"
+  }
+} as const;
+
 export function AiSettingsForm({ tenantId, bots, aiModels, initial }: AiSettingsFormProps) {
+  const { locale } = useI18n();
+  const labels = copy[locale];
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [testReply, setTestReply] = useState("");
@@ -44,7 +125,7 @@ export function AiSettingsForm({ tenantId, bots, aiModels, initial }: AiSettings
       role: String(data.get("role") || "assistant"),
       tone: String(data.get("tone") || "neutral"),
       responseLength: String(data.get("responseLength") || "medium"),
-      fallbackMessage: String(data.get("fallbackMessage") || "عذراً، لم أفهم طلبك جيداً. هل يمكنك التوضيح؟"),
+      fallbackMessage: String(data.get("fallbackMessage") || (locale === "ar" ? fallbackAr : fallbackEn)),
       useEmojis: data.get("useEmojis") === "on"
     };
 
@@ -56,7 +137,7 @@ export function AiSettingsForm({ tenantId, bots, aiModels, initial }: AiSettings
 
     if (!response.ok) {
       const body = await response.json();
-      throw new Error(body.error || "تعذر حفظ إعدادات AI.");
+      throw new Error(body.error || labels.saveError);
     }
   }
 
@@ -66,9 +147,9 @@ export function AiSettingsForm({ tenantId, bots, aiModels, initial }: AiSettings
     setSuccess("");
     try {
       await save(event.currentTarget);
-      setSuccess("تم حفظ إعدادات AI.");
+      setSuccess(labels.saved);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "تعذر حفظ إعدادات AI.");
+      setError(err instanceof Error ? err.message : labels.saveError);
     }
   }
 
@@ -76,7 +157,7 @@ export function AiSettingsForm({ tenantId, bots, aiModels, initial }: AiSettings
     const form = event.currentTarget.form;
     if (!form) return;
     setError("");
-    setTestReply("جاري اختبار النموذج...");
+    setTestReply(labels.testing);
     try {
       await save(form);
       const response = await fetch("/api/ai", {
@@ -85,35 +166,52 @@ export function AiSettingsForm({ tenantId, bots, aiModels, initial }: AiSettings
         body: JSON.stringify({
           tenantId,
           botId: selectedBot,
-          message: "اختبر إعدادات ChatZi برسالة قصيرة.",
+          message: labels.testMessage,
           conversationId: ""
         })
       });
       const body = await response.json();
-      setTestReply(body.reply || body.error || "لم يصل رد.");
+      setTestReply(body.reply || body.error || labels.noReply);
     } catch (err) {
       setTestReply("");
-      setError(err instanceof Error ? err.message : "فشل اختبار الرسالة.");
+      setError(err instanceof Error ? err.message : labels.testError);
     }
   }
 
   return (
     <form onSubmit={onSubmit} className="panel max-w-4xl p-5">
-      {error ? <p className="mb-4 rounded-md bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
-      {success ? <p className="mb-4 rounded-md bg-emerald-50 p-3 text-sm text-emerald-700">{success}</p> : null}
+      {error ? <p className="callout-error mb-4">{error}</p> : null}
+      {success ? <p className="callout-success mb-4">{success}</p> : null}
       <div className="grid gap-4 md:grid-cols-2">
         <div>
-          <label className="label" htmlFor="botId">البوت</label>
+          <label className="label" htmlFor="botId">{labels.bot}</label>
           <select className="field" id="botId" value={selectedBot} onChange={(event) => setSelectedBot(event.target.value)}>
             {bots.map((bot) => (
-              <option key={bot.id} value={bot.id}>
-                {bot.name}
-              </option>
+              <option key={bot.id} value={bot.id}>{bot.name}</option>
             ))}
           </select>
         </div>
         <div>
-          <label className="label" htmlFor="aiModelId">نموذج AI</label>
+          <label className="label" htmlFor="temperature">Temperature</label>
+          <input className="field" id="temperature" name="temperature" type="number" min="0" max="2" step="0.1" defaultValue={initial?.temperature ?? 0.4} />
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-4 md:grid-cols-2">
+        <Select label={labels.language} id="language" name="language" defaultValue={initial?.language || "auto"} options={[
+          ["auto", labels.auto],
+          ["arabic", labels.arabic],
+          ["english", labels.english]
+        ]} />
+        <Select label={labels.role} id="role" name="role" defaultValue={initial?.role || "assistant"} options={[
+          ["assistant", labels.assistant],
+          ["customer_service", labels.customerService],
+          ["tech_support", labels.techSupport],
+          ["sales", labels.sales],
+          ["receptionist", labels.receptionist]
+        ]} />
+        <div>
+          <label className="label" htmlFor="aiModelId">{labels.model}</label>
           <select
             className="field"
             id="aiModelId"
@@ -128,96 +226,72 @@ export function AiSettingsForm({ tenantId, bots, aiModels, initial }: AiSettings
             ))}
           </select>
         </div>
-        <div>
-          <label className="label" htmlFor="temperature">Temperature</label>
-          <input
-            className="field"
-            id="temperature"
-            name="temperature"
-            type="number"
-            min="0"
-            max="2"
-            step="0.1"
-            defaultValue={initial?.temperature ?? 0.4}
-          />
-        </div>
+        <Select label={labels.tone} id="tone" name="tone" defaultValue={initial?.tone || "neutral"} options={[
+          ["neutral", labels.neutral],
+          ["formal", labels.formal],
+          ["casual", labels.casual],
+          ["playful", labels.playful],
+          ["empathetic", labels.empathetic]
+        ]} />
+        <Select label={labels.responseLength} id="responseLength" name="responseLength" defaultValue={initial?.responseLength || "medium"} options={[
+          ["short", labels.short],
+          ["medium", labels.medium],
+          ["long", labels.long]
+        ]} />
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 mt-4">
-        <div>
-          <label className="label" htmlFor="language">لغة البوت</label>
-          <select className="field" id="language" name="language" defaultValue={initial?.language || "auto"}>
-            <option value="auto">تلقائي (حسب لغة العميل)</option>
-            <option value="arabic">العربية</option>
-            <option value="english">الإنجليزية</option>
-          </select>
-        </div>
-        <div>
-          <label className="label" htmlFor="role">وظيفة البوت</label>
-          <select className="field" id="role" name="role" defaultValue={initial?.role || "assistant"}>
-            <option value="assistant">مساعد عام</option>
-            <option value="customer_service">خدمة عملاء</option>
-            <option value="tech_support">دعم فني</option>
-            <option value="sales">مبيعات</option>
-            <option value="receptionist">موظف استقبال</option>
-          </select>
-        </div>
-        <div>
-          <label className="label" htmlFor="tone">نبرة الحديث</label>
-          <select className="field" id="tone" name="tone" defaultValue={initial?.tone || "neutral"}>
-            <option value="neutral">حيادي / موضوعي</option>
-            <option value="formal">رسمي / احترافي</option>
-            <option value="casual">ودي / غير رسمي</option>
-            <option value="playful">مرح / لطيف</option>
-            <option value="empathetic">متعاطف / متفهم</option>
-          </select>
-        </div>
-        <div>
-          <label className="label" htmlFor="responseLength">طول الإجابة</label>
-          <select className="field" id="responseLength" name="responseLength" defaultValue={initial?.responseLength || "medium"}>
-            <option value="short">قصير ومختصر</option>
-            <option value="medium">متوسط</option>
-            <option value="long">طويل ومفصل</option>
-          </select>
-        </div>
-      </div>
-      <label className="label mt-4" htmlFor="systemPrompt">التعليمات المخصصة الإضافية (System Prompt)</label>
-      <textarea
-        className="field min-h-36"
-        id="systemPrompt"
-        name="systemPrompt"
-        defaultValue={initial?.systemPrompt || DEFAULT_SYSTEM_PROMPT}
-      />
-      
-      <label className="label mt-4" htmlFor="fallbackMessage">رسالة الاعتذار (Fallback Message)</label>
-      <textarea
-        className="field min-h-20"
-        id="fallbackMessage"
-        name="fallbackMessage"
-        defaultValue={initial?.fallbackMessage || "عذراً، لم أفهم طلبك جيداً. هل يمكنك التوضيح؟"}
-      />
+      <label className="label mt-4" htmlFor="systemPrompt">{labels.systemPrompt}</label>
+      <textarea className="field min-h-36" id="systemPrompt" name="systemPrompt" defaultValue={initial?.systemPrompt || DEFAULT_SYSTEM_PROMPT} />
+
+      <label className="label mt-4" htmlFor="fallbackMessage">{labels.fallback}</label>
+      <textarea className="field min-h-20" id="fallbackMessage" name="fallbackMessage" defaultValue={initial?.fallbackMessage || (locale === "ar" ? fallbackAr : fallbackEn)} />
 
       <div className="mt-4 flex flex-col gap-3">
-        <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+        <label className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
           <input name="useEmojis" type="checkbox" defaultChecked={initial?.useEmojis ?? true} />
-          استخدام الرموز التعبيرية (Emojis)
+          {labels.emojis}
         </label>
-        <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+        <label className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
           <input name="isEnabled" type="checkbox" defaultChecked={initial?.isEnabled ?? true} />
-          تفعيل الذكاء الاصطناعي
+          {labels.enabled}
         </label>
       </div>
       <div className="mt-5 flex flex-wrap gap-3">
         <button className="btn-primary">
           <Save size={18} />
-          حفظ الإعدادات
+          {labels.save}
         </button>
         <button type="button" className="btn-secondary" onClick={onTest}>
           <Send size={18} />
-          اختبار الرسالة
+          {labels.test}
         </button>
       </div>
-      {testReply ? <p className="mt-4 rounded-md bg-slate-50 p-3 text-sm leading-7 text-slate-700">{testReply}</p> : null}
+      {testReply ? <p className="mt-4 rounded-md bg-slate-50 p-3 text-sm leading-7 text-slate-700 dark:bg-slate-900/60 dark:text-slate-200">{testReply}</p> : null}
     </form>
+  );
+}
+
+function Select({
+  label,
+  id,
+  name,
+  defaultValue,
+  options
+}: {
+  label: string;
+  id: string;
+  name: string;
+  defaultValue: string;
+  options: Array<[string, string]>;
+}) {
+  return (
+    <div>
+      <label className="label" htmlFor={id}>{label}</label>
+      <select className="field" id={id} name={name} defaultValue={defaultValue}>
+        {options.map(([value, text]) => (
+          <option key={value} value={value}>{text}</option>
+        ))}
+      </select>
+    </div>
   );
 }

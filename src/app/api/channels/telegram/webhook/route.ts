@@ -1,67 +1,29 @@
-import { NextResponse } from "next/server";
-import { connectToDatabase } from "@/lib/mongodb";
-import {
-  createChannelReply,
-  findActiveChannel,
-  logWebhook,
-  sendTelegramMessage
-} from "@/lib/channel-service";
-import { decryptSecret } from "@/lib/crypto";
+import { NextRequest, NextResponse } from "next/server";
+import { enqueueInboundWebhook } from "@/server/channels/webhookIngress";
 
-type TelegramUpdate = {
-  message?: {
-    chat?: { id: number | string };
-    from?: { id?: number | string };
-    text?: string;
-  };
-};
-
-export async function POST(request: Request) {
-  const payload = (await request.json()) as TelegramUpdate;
-  let tenantId: string | undefined;
-  let botId: string | undefined;
-
+export async function POST(request: NextRequest) {
   try {
-    await connectToDatabase();
-    const secretToken = request.headers.get("x-telegram-bot-api-secret-token");
-    const channel = secretToken
-      ? await findActiveChannel("telegram", { "config.webhookSecret": secretToken })
-      : await findActiveChannel("telegram");
-    if (!channel) throw new Error("لا توجد قناة Telegram مفعلة أو Secret Token غير مطابق.");
+    const payload = await request.json();
+    
+    // Telegram webhooks don't send the channelId in the URL by default unless configured.
+    // They do send X-Telegram-Bot-Api-Secret-Token which our adapter verifies and we can use to find the channel.
+    // We pass the request to the central pipeline.
 
-    tenantId = channel.tenantId.toString();
-    botId = channel.botId.toString();
-    const config = (channel.config || {}) as Record<string, unknown>;
-    const token = decryptSecret(String(config.botTokenEncrypted || "")) || process.env.TELEGRAM_BOT_TOKEN || "";
-    await logWebhook({ channel: "telegram", payload, tenantId, botId });
-
-    const chatId = payload.message?.chat?.id;
-    const text = payload.message?.text;
-    const userId = payload.message?.from?.id || chatId;
-    if (!chatId || !text || !userId) {
-      return NextResponse.json({ ok: true, ignored: true });
-    }
-
-    const result = await createChannelReply({
-      type: "telegram",
-      tenantId,
-      botId,
-      externalUserId: String(userId),
-      message: text,
-      metadata: payload
+    const result = await enqueueInboundWebhook({
+      provider: "telegram",
+      request,
+      payload
     });
 
-    await sendTelegramMessage(chatId, result.reply, token);
-    await logWebhook({ channel: "telegram", payload, status: "success", tenantId, botId });
+    if (!result.ok) {
+      console.error("Telegram webhook error:", result.error);
+      return NextResponse.json({ error: result.error }, { status: result.status || 400 });
+    }
+
     return NextResponse.json({ ok: true });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Telegram webhook error";
-    await logWebhook({ channel: "telegram", payload, status: "error", error: message, tenantId, botId }).catch(
-      () => null
-    );
-    if (tenantId && botId) {
-      return NextResponse.json({ ok: true, handled: true, error: message });
-    }
-    return NextResponse.json({ error: message }, { status: 400 });
+    console.error("Telegram webhook internal error:", error);
+    // Always return 200 to telegram to prevent retries if it's our internal error that can't be fixed by retrying
+    return NextResponse.json({ ok: true, error: "Internal error handled" });
   }
 }

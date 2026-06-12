@@ -149,19 +149,21 @@ export async function ensureTicketForConversation(input: EnsureTicketInput) {
     .reverse()
     .map((message) => `${message.sender}: ${message.content}`)
     .join("\n");
+  const subject =
+    input.subject ||
+    buildSubject({
+      category: input.category,
+      triggerReason: input.triggerReason,
+      externalUserId: conversation.externalUserId,
+    });
 
   return Ticket.create({
     tenantId: input.tenantId,
     botId: input.botId,
     conversationId: input.conversationId,
     number: counter + 1,
-    subject:
-      input.subject ||
-      buildSubject({
-        category: input.category,
-        triggerReason: input.triggerReason,
-        externalUserId: conversation.externalUserId,
-      }),
+    subject,
+    title: subject,
     description: input.description || transcriptSummary,
     status: "open",
     priority: input.priority || "medium",

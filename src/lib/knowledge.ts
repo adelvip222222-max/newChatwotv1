@@ -14,6 +14,9 @@ import {
 } from "@/lib/models";
 import { connectToDatabase } from "@/lib/mongodb";
 import { decryptSecret } from "@/lib/crypto";
+import { knowledgeTrainingQueue, defaultJobOptions, makeQueueJobId } from "@/lib/queues";
+import { logger } from "@/lib/logger";
+import { routeAiRequest } from "@/lib/ai-router";
 
 export const knowledgeSourceTypes = [
   "pdf",
@@ -67,7 +70,7 @@ type KnowledgeSearchResult = {
   documentId: string;
 };
 
-const embeddingDimensions = 128;
+const LOCAL_HASH_DIMENSIONS = 128;
 const defaultCategories = [
   "المنتجات",
   "الخدمات",
@@ -120,17 +123,17 @@ export async function getKnowledgeDashboardData(tenantId: string) {
     KnowledgeDocument.find({ tenantId }).sort({ updatedAt: -1 }).limit(80).lean(),
     AiSetting.find({ tenantId }).lean()
   ]);
-  const settingsByBot = new Map(aiSettings.map((setting) => [setting.botId.toString(), setting]));
+  const settingsByBot = new Map(aiSettings.map((setting) => [String(setting.botId), setting]));
 
   return {
     bots: bots.map((bot) => ({
-      id: bot._id.toString(),
+      id: String(bot._id),
       name: bot.name,
       knowledgeEnabled: bot.knowledgeEnabled ?? true,
       showKnowledgeSources: bot.showKnowledgeSources ?? false,
       confidenceDirectThreshold: bot.confidenceDirectThreshold ?? 70,
       confidenceReviewThreshold: bot.confidenceReviewThreshold ?? 40,
-      systemPrompt: settingsByBot.get(bot._id.toString())?.systemPrompt || "",
+      systemPrompt: settingsByBot.get(String(bot._id))?.systemPrompt || "",
       autoFollowupEnabled: bot.autoFollowupEnabled ?? false,
       followupDelayMinutes: bot.followupDelayMinutes ?? 60,
       followupMaxAttempts: bot.followupMaxAttempts ?? 1,
@@ -139,28 +142,28 @@ export async function getKnowledgeDashboardData(tenantId: string) {
       autoCloseMessage: bot.autoCloseMessage || ""
     })),
     categories: categories.map((category) => ({
-      id: category._id.toString(),
+      id: String(category._id),
       name: category.name,
       description: category.description || ""
     })),
     collections: collections.map((collection) => ({
-      id: collection._id.toString(),
-      categoryId: collection.categoryId.toString(),
+      id: String(collection._id),
+      categoryId: String(collection.categoryId),
       name: collection.name
     })),
     documents: documents.map((document) => ({
-      id: document._id.toString(),
+      id: String(document._id),
       title: document.title,
       sourceType: document.sourceType,
       status: document.status,
       statusReason: document.statusReason || "",
       tags: document.tags || [],
       isTemporary: document.isTemporary || false,
-      expiresAt: document.expiresAt?.toISOString() || "",
+      expiresAt: document.expiresAt ? new Date(document.expiresAt).toISOString() : "",
       chunkCount: document.chunkCount || 0,
       embeddingCount: document.embeddingCount || 0,
       needsRetraining: document.needsRetraining || false,
-      updatedAt: document.updatedAt?.toISOString() || ""
+      updatedAt: document.updatedAt ? new Date(document.updatedAt).toISOString() : ""
     }))
   };
 }
@@ -230,7 +233,7 @@ export async function createKnowledgeDocument(input: CreateKnowledgeInput) {
     tags: normalizeTags(input.tags),
     isTemporary: input.isTemporary ?? false,
     expiresAt: input.expiresAt,
-    status: duplicate ? "duplicate" : "processing",
+    status: duplicate ? "duplicate" : "pending",
     statusReason: duplicate ? "هذا المحتوى مكرر بالفعل." : "",
     duplicateOf: duplicate?._id,
     rawText: cleaned,
@@ -245,7 +248,16 @@ export async function createKnowledgeDocument(input: CreateKnowledgeInput) {
   });
 
   if (!duplicate) {
-    await trainKnowledgeDocument(document._id.toString(), input.tenantId);
+    const jobId = makeQueueJobId("knowledge-train", document._id.toString());
+    await knowledgeTrainingQueue.add(
+      "train-document",
+      { documentId: document._id.toString(), tenantId: input.tenantId },
+      { ...defaultJobOptions, jobId }
+    );
+    logger.info("knowledge.training_enqueued", {
+      documentId: document._id.toString(),
+      tenantId: input.tenantId
+    });
   }
 
   return document._id.toString();
@@ -265,17 +277,9 @@ export async function trainKnowledgeDocument(documentId: string, tenantId: strin
     const chunks = splitIntoChunks(document.rawText || "");
     const records = [];
 
-    // Resolve the active OpenAI model for the tenant or the system default
-    let aiModel = await AiModel.findOne({
-      tenantId: tenantId,
-      provider: "openai",
-      isActive: true,
-    });
+    let aiModel = await AiModel.findOne({ tenantId, provider: "openai", isActive: true });
     if (!aiModel) {
-      aiModel = await AiModel.findOne({
-        provider: "openai",
-        isActive: true,
-      });
+      aiModel = await AiModel.findOne({ provider: "openai", isActive: true });
     }
 
     const apiKey = aiModel ? decryptSecret(aiModel.apiKeyEncrypted) : "";
@@ -319,10 +323,12 @@ export async function trainKnowledgeDocument(documentId: string, tenantId: strin
     document.needsRetraining = false;
     await document.save();
   } catch (error) {
+    const reason = error instanceof Error ? error.message : "فشل تدريب مصدر المعرفة.";
     document.status = "error";
-    document.statusReason = error instanceof Error ? error.message : "فشل تدريب مصدر المعرفة.";
+    document.statusReason = reason;
     document.needsRetraining = true;
     await document.save();
+    logger.error("knowledge.training_failed", { documentId, tenantId, error: reason });
     throw error;
   }
 }
@@ -332,10 +338,134 @@ export async function retrainAllKnowledge(tenantId: string, botId?: string) {
   const filter: Record<string, unknown> = { tenantId, status: { $ne: "duplicate" } };
   if (botId) filter.botId = botId;
   const documents = await KnowledgeDocument.find(filter).select("_id").lean();
-  for (const document of documents) {
-    await trainKnowledgeDocument(document._id.toString(), tenantId);
+
+  const jobs = documents.map((doc) => ({
+    name: "train-document",
+    data: { documentId: doc._id.toString(), tenantId },
+    opts: {
+      ...defaultJobOptions,
+      jobId: makeQueueJobId("knowledge-retrain", doc._id.toString()),
+    },
+  }));
+
+  if (jobs.length) {
+    await knowledgeTrainingQueue.addBulk(jobs);
+    logger.info("knowledge.retrain_enqueued", { tenantId, botId, count: jobs.length });
   }
+
   return documents.length;
+}
+
+export async function getKnowledgeDocumentStatus(documentId: string, tenantId: string) {
+  await connectToDatabase();
+  const document = await KnowledgeDocument.findOne({ _id: documentId, tenantId })
+    .select("status statusReason chunkCount embeddingCount needsRetraining")
+    .lean();
+  if (!document) return null;
+  return {
+    status: document.status,
+    statusReason: document.statusReason || null,
+    chunkCount: document.chunkCount || 0,
+    embeddingCount: document.embeddingCount || 0,
+    needsRetraining: document.needsRetraining || false,
+  };
+}
+
+export async function getKnowledgeDocumentForEdit(documentId: string, tenantId: string) {
+  await connectToDatabase();
+  if (!Types.ObjectId.isValid(documentId)) throw new Error("معرف مصدر المعرفة غير صالح.");
+  const document = await KnowledgeDocument.findOne({ _id: documentId, tenantId }).lean();
+  if (!document) throw new Error("مصدر المعرفة غير موجود.");
+  return {
+    id: document._id.toString(),
+    title: document.title,
+    sourceType: document.sourceType,
+    sourceUrl: document.sourceUrl || "",
+    tags: document.tags || [],
+    rawText: document.rawText || "",
+    status: document.status,
+    statusReason: document.statusReason || "",
+    needsRetraining: document.needsRetraining || false,
+    updatedAt: document.updatedAt ? new Date(document.updatedAt).toISOString() : ""
+  };
+}
+
+export async function updateKnowledgeDocument(input: {
+  documentId: string;
+  tenantId: string;
+  title?: string;
+  rawText?: string;
+  tags?: string[];
+  sourceUrl?: string;
+}) {
+  await connectToDatabase();
+  if (!Types.ObjectId.isValid(input.documentId)) throw new Error("معرف مصدر المعرفة غير صالح.");
+  const document = await KnowledgeDocument.findOne({ _id: input.documentId, tenantId: input.tenantId });
+  if (!document) throw new Error("مصدر المعرفة غير موجود.");
+
+  if (typeof input.title === "string" && input.title.trim()) document.title = input.title.trim();
+  if (typeof input.sourceUrl === "string") document.sourceUrl = input.sourceUrl.trim();
+  if (Array.isArray(input.tags)) document.tags = normalizeTags(input.tags);
+  if (typeof input.rawText === "string") {
+    const cleaned = cleanText(input.rawText);
+    if (cleaned.length < 10) throw new Error("المحتوى قصير جدًا أو لا يحتوي على نص قابل للقراءة.");
+    document.rawText = cleaned;
+    document.textHash = hash(cleaned);
+    document.sizeBytes = Buffer.byteLength(cleaned);
+    document.status = "pending";
+    document.statusReason = "تم تعديل المحتوى ويحتاج إعادة تدريب.";
+    document.needsRetraining = true;
+  }
+  await document.save();
+  return { success: true, id: document._id.toString(), needsRetraining: document.needsRetraining };
+}
+
+export async function deleteKnowledgeDocument(documentId: string, tenantId: string) {
+  await connectToDatabase();
+  if (!Types.ObjectId.isValid(documentId)) throw new Error("معرف مصدر المعرفة غير صالح.");
+  const document = await KnowledgeDocument.findOne({ _id: documentId, tenantId }).select("_id");
+  if (!document) throw new Error("مصدر المعرفة غير موجود.");
+  await Promise.all([
+    KnowledgeChunk.deleteMany({ tenantId, documentId: document._id }),
+    KnowledgeDocument.deleteOne({ _id: document._id, tenantId })
+  ]);
+  return { success: true, deleted: true };
+}
+
+export async function rewriteKnowledgeDocumentWithAi(documentId: string, tenantId: string) {
+  await connectToDatabase();
+  const document = await KnowledgeDocument.findOne({ _id: documentId, tenantId });
+  if (!document) throw new Error("مصدر المعرفة غير موجود.");
+  const currentText = String(document.rawText || "").trim();
+  if (currentText.length < 10) throw new Error("لا يوجد نص كافٍ لإعادة الصياغة.");
+
+  const result = await routeAiRequest({
+    temperature: 0.2,
+    systemPrompt: [
+      "You are a knowledge-base editor for an Arabic/English omnichannel CRM.",
+      "Rewrite the supplied content to be clearer, structured, searchable, and factual.",
+      "Do not add facts that are not present. Preserve product names, prices, policies, phone numbers, URLs, and dates exactly.",
+      "Return only the rewritten knowledge text, no markdown fence."
+    ].join("\n"),
+    userInput: currentText.slice(0, 24_000)
+  });
+
+  const rewritten = cleanText(result.reply || "");
+  if (rewritten.length < 10) throw new Error("لم يتمكن الذكاء الاصطناعي من إعادة صياغة النص.");
+  document.rawText = rewritten;
+  document.textHash = hash(rewritten);
+  document.sizeBytes = Buffer.byteLength(rewritten);
+  document.status = "pending";
+  document.statusReason = "تمت إعادة الصياغة بالذكاء الاصطناعي ويحتاج المصدر لإعادة التدريب.";
+  document.needsRetraining = true;
+  document.metadata = {
+    ...(document.metadata || {}),
+    rewrittenByAiAt: new Date().toISOString(),
+    rewrittenProvider: result.providerUsed,
+    rewrittenModel: result.modelUsed
+  };
+  await document.save();
+  return { success: true, id: document._id.toString(), rawText: rewritten };
 }
 
 export async function searchKnowledge(input: {
@@ -346,16 +476,21 @@ export async function searchKnowledge(input: {
 }) {
   await connectToDatabase();
   const question = cleanText(input.question);
-  const queryEmbedding = (await createEmbedding(question)).embedding;
+
+  const aiModel = await AiModel.findOne({ tenantId: input.tenantId, provider: "openai", isActive: true });
+  const apiKey = aiModel ? decryptSecret(aiModel.apiKeyEncrypted) : "";
+  const { embedding: queryEmbedding, provider: queryProvider } = await createEmbedding(question, apiKey);
   const queryKeywords = extractKeywords(question);
+
+  const notExpired = { $or: [{ expiresAt: { $exists: false } }, { expiresAt: null }, { expiresAt: { $gt: new Date() } }] };
 
   const semanticCandidates = await KnowledgeChunk.find({
     tenantId: input.tenantId,
     botId: input.botId,
-    $or: [{ expiresAt: { $exists: false } }, { expiresAt: null }, { expiresAt: { $gt: new Date() } }]
+    ...notExpired
   })
     .sort({ updatedAt: -1 })
-    .limit(250)
+    .limit(Number(process.env.KNOWLEDGE_CANDIDATE_LIMIT || 600))
     .lean();
 
   const keywordCandidates = queryKeywords.length
@@ -363,7 +498,7 @@ export async function searchKnowledge(input: {
         {
           tenantId: input.tenantId,
           botId: input.botId,
-          $or: [{ expiresAt: { $exists: false } }, { expiresAt: null }, { expiresAt: { $gt: new Date() } }],
+          ...notExpired,
           $text: { $search: queryKeywords.join(" ") }
         },
         { score: { $meta: "textScore" } }
@@ -379,9 +514,16 @@ export async function searchKnowledge(input: {
 
   const scored = [...candidates.values()]
     .map((item) => {
-      const semanticScore = cosineSimilarity(queryEmbedding, item.embedding || []);
+      const itemEmbedding = Array.isArray(item.embedding) ? item.embedding : [];
+      const comparableQueryEmbedding = itemEmbedding.length === queryEmbedding.length
+        ? queryEmbedding
+        : localHashEmbedding(question);
+      const comparableItemEmbedding = itemEmbedding.length === comparableQueryEmbedding.length
+        ? itemEmbedding
+        : localHashEmbedding(item.text || "");
+      const semanticScore = cosineSimilarity(comparableQueryEmbedding, comparableItemEmbedding);
       const keywordScore = keywordOverlap(queryKeywords, item.keywords || [], item.normalizedText || "");
-      const score = Math.round((semanticScore * 0.68 + keywordScore * 0.32) * 100);
+      const score = Math.round((semanticScore * 0.45 + keywordScore * 0.55) * 100);
       return {
         text: item.text,
         score,
@@ -397,11 +539,20 @@ export async function searchKnowledge(input: {
 
   const top10 = scored.slice(0, input.limit || 10);
   const confidence = calculateConfidence(top10, queryKeywords);
+
+  const needsRetrainingCount = await KnowledgeChunk.countDocuments({
+    tenantId: input.tenantId,
+    botId: input.botId,
+    embeddingProvider: { $ne: queryProvider }
+  });
+
   return {
     intent: inferIntent(question),
     keywords: queryKeywords,
     confidence,
-    results: top10
+    results: top10,
+    embeddingProvider: queryProvider,
+    ...(needsRetrainingCount > 0 ? { needsRetraining: needsRetrainingCount } : {})
   };
 }
 
@@ -429,10 +580,10 @@ export function buildKnowledgePrompt(input: {
   });
 
   return [
-    "قاعدة المعرفة هي مصدر الحقيقة الأول. استخدم المقاطع التالية قبل أي معرفة عامة.",
-    "امنع الردود الضعيفة مثل: لا أعرف، لا أملك معلومات، سأحولك للدعم، إلا بعد محاولات بحث وتوضيح.",
-    "إذا كانت الثقة أعلى من 70 أجب مباشرة. بين 40 و70 أجب مع تنبيه لطيف أن المعلومة قد تحتاج مراجعة. أقل من 40 اسأل سؤالًا توضيحيًا محددًا.",
-    "لا تحول المحادثة إلى موظف إلا إذا طلب المستخدم ذلك صراحة أو كانت عملية مالية/إدارية تحتاج صلاحية بشرية.",
+    "قاعدة المعرفة هي مصدر الحقيقة الأول. اجعل 90% من الرد مبنيًا على هذه المقاطع عند توفرها.",
+    "لا تقل لا أعرف ولا تحول للدعم إذا كان هناك أي مقطع مفيد؛ استخرج أفضل إجابة مباشرة من المقاطع المتاحة.",
+    "إذا كانت الثقة أعلى من 50 أجب مباشرة. بين 15 و50 أجب بإجابة قصيرة مبنية على الموجود ثم اسأل سؤالًا توضيحيًا واحدًا. أقل من 15 اسأل سؤالًا توضيحيًا محددًا.",
+    "لا تحول المحادثة إلى موظف إلا إذا طلب المستخدم ذلك صراحة أو كانت عملية مالية/إدارية تحتاج صلاحية بشرية أو انتهت محاولات التوضيح.",
     `Intent: ${input.intent}`,
     `Keywords: ${input.keywords.join(", ") || "-"}`,
     `Confidence: ${input.confidence}/100`,
@@ -541,39 +692,53 @@ function splitIntoChunks(text: string) {
 async function createEmbedding(text: string, apiKey?: string): Promise<{ embedding: number[]; provider: string }> {
   const finalApiKey = apiKey || process.env.OPENAI_API_KEY;
   if (finalApiKey) {
-    const client = new OpenAI({ apiKey: finalApiKey });
-    const response = await client.embeddings.create({
-      model: process.env.OPENAI_EMBEDDING_MODEL || "text-embedding-3-small",
-      input: text.slice(0, 8000)
-    });
-    return { embedding: response.data[0]?.embedding || [], provider: "openai" };
+    try {
+      const client = new OpenAI({ apiKey: finalApiKey });
+      const response = await client.embeddings.create({
+        model: process.env.OPENAI_EMBEDDING_MODEL || "text-embedding-3-small",
+        input: text.slice(0, 8000)
+      });
+      return { embedding: response.data[0]?.embedding || [], provider: "openai" };
+    } catch (error) {
+      logger.warn("knowledge.openai_embedding_failed_fallback", {
+        error: error instanceof Error ? error.message : "unknown"
+      });
+    }
   }
   return { embedding: localHashEmbedding(text), provider: "local-hash" };
 }
 
 function localHashEmbedding(text: string) {
-  const vector = Array.from({ length: embeddingDimensions }, () => 0);
+  const vector = Array.from({ length: LOCAL_HASH_DIMENSIONS }, () => 0);
   for (const token of extractKeywords(text, 200)) {
     const digest = crypto.createHash("sha256").update(token).digest();
-    const index = digest[0] % embeddingDimensions;
+    const index = digest[0] % LOCAL_HASH_DIMENSIONS;
     vector[index] += 1;
   }
   const length = Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0)) || 1;
   return vector.map((value) => Number((value / length).toFixed(6)));
 }
 
+/**
+ * Computes cosine similarity between two vectors.
+ * Returns 0 immediately if dimensions don't match — comparing vectors of different
+ * dimensions (e.g. OpenAI 1536 vs local-hash 128) would produce misleading scores.
+ */
 function cosineSimilarity(a: number[], b: number[]) {
   if (!a.length || !b.length) return 0;
-  const max = Math.min(a.length, b.length);
-  let dot = 0;
-  let aLength = 0;
-  let bLength = 0;
-  for (let index = 0; index < max; index += 1) {
-    dot += a[index] * b[index];
-    aLength += a[index] * a[index];
-    bLength += b[index] * b[index];
+  if (a.length !== b.length) {
+    logger.warn("knowledge.cosine_dimension_mismatch", { aLen: a.length, bLen: b.length });
+    return 0;
   }
-  return dot / ((Math.sqrt(aLength) || 1) * (Math.sqrt(bLength) || 1));
+  let dot = 0;
+  let aLen = 0;
+  let bLen = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    aLen += a[i] * a[i];
+    bLen += b[i] * b[i];
+  }
+  return dot / ((Math.sqrt(aLen) || 1) * (Math.sqrt(bLen) || 1));
 }
 
 function keywordOverlap(queryKeywords: string[], chunkKeywords: string[], normalizedText: string) {
@@ -602,25 +767,8 @@ function normalizeForSearch(value: string) {
 
 function extractKeywords(value: string, limit = 32) {
   const stopWords = new Set([
-    "من",
-    "في",
-    "على",
-    "عن",
-    "الى",
-    "إلى",
-    "ما",
-    "هل",
-    "هو",
-    "هي",
-    "the",
-    "and",
-    "for",
-    "with",
-    "you",
-    "are",
-    "what",
-    "how",
-    "is"
+    "من", "في", "على", "عن", "الى", "إلى", "ما", "هل", "هو", "هي",
+    "the", "and", "for", "with", "you", "are", "what", "how", "is"
   ]);
   const tokens = normalizeForSearch(value)
     .split(" ")

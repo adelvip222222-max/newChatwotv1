@@ -1,22 +1,22 @@
 import bcrypt from "bcryptjs";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireAdmin } from "@/lib/authz";
+import { requireSuperAdmin } from "@/server/auth/guards";
 import { Tenant, User } from "@/lib/models";
 import { connectToDatabase } from "@/lib/mongodb";
 import { TENANT_USER_LIMITS } from "@/lib/user-admin";
-import { roles } from "@/server/permissions/roles";
+const tenantEditableRoles = ["admin", "manager", "agent", "viewer"] as const;
 
 const schema = z.object({
   name: z.string().min(2).max(120),
   email: z.string().email().max(180),
-  password: z.string().min(8),
-  role: z.enum(roles).refine((role) => role !== "owner", "Owner users cannot be created here.")
+  password: z.string().min(12).max(128).regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$/, "Password must include uppercase, lowercase, and a number."),
+  role: z.enum(tenantEditableRoles)
 });
 
 export async function POST(request: Request) {
   try {
-    const session = await requireAdmin();
+    const session = await requireSuperAdmin();
     const body = schema.parse(await request.json());
     await connectToDatabase();
 

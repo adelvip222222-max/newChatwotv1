@@ -7,7 +7,6 @@ const aiSettingSchema = new Schema(
     botId: { type: Schema.Types.ObjectId, ref: "Bot", required: true, index: true },
     aiModelId: { type: Schema.Types.ObjectId, ref: "AiModel", required: false },
     provider: { type: String, default: "openai" },
-    apiKey: { type: String, default: "" },
     model: { type: String, default: () => process.env.DEFAULT_AI_MODEL || "gpt-4o-mini" },
     systemPrompt: { type: String, default: DEFAULT_SYSTEM_PROMPT },
     temperature: { type: Number, default: 0.4, min: 0, max: 2 },

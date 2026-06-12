@@ -31,8 +31,8 @@ const userSchema = new Schema(
 
     role: {
       type: String,
-      enum: ["owner", "admin", "manager", "agent", "viewer"],
-      default: "owner",
+      enum: ["super-admin", "owner", "admin", "manager", "agent", "viewer"],
+      default: "admin",
       index: true,
     },
 
@@ -60,6 +60,12 @@ const userSchema = new Schema(
     isActive: {
       type: Boolean,
       default: true,
+      index: true,
+    },
+
+    isSuperAdmin: {
+      type: Boolean,
+      default: false,
       index: true,
     },
 

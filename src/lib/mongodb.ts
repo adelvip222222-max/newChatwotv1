@@ -1,7 +1,5 @@
 import mongoose from "mongoose";
 
-const MONGODB_URI = process.env.MONGODB_URI;
-
 type CachedConnection = {
   conn: typeof mongoose | null;
   promise: Promise<typeof mongoose> | null;
@@ -19,6 +17,8 @@ const cached = globalWithMongoose.mongooseCache ?? {
 globalWithMongoose.mongooseCache = cached;
 
 export async function connectToDatabase() {
+  const MONGODB_URI = process.env.MONGODB_URI;
+
   if (!MONGODB_URI) {
     throw new Error("MONGODB_URI غير مضبوط في ملف البيئة.");
   }

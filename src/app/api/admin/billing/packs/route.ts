@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireAdmin } from "@/lib/authz";
+import { requireSuperAdmin } from "@/server/auth/guards";
 import { MessagePack } from "@/lib/models";
 import { connectToDatabase } from "@/lib/mongodb";
 
@@ -16,7 +16,7 @@ const schema = z.object({
 
 export async function POST(request: Request) {
   try {
-    const session = await requireAdmin();
+    const session = await requireSuperAdmin();
     const body = schema.parse(await request.json());
     await connectToDatabase();
     const pack = await MessagePack.create({
