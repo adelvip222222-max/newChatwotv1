@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, useTransition, type ComponentType } from "react";
+import { SystemLogs } from "./system-logs";
 import {
   Activity,
   AlertTriangle,
@@ -339,7 +340,11 @@ export function DeveloperPanel() {
         </div>
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-2">
+      <section className="mt-4">
+        <SystemLogs />
+      </section>
+
+      <section className="grid gap-4 xl:grid-cols-2 mt-4">
         <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950">
           <h2 className="flex items-center gap-2 text-lg font-black text-ink dark:text-white"><Server size={19} /> PM2 Processes</h2>
           {metrics.pm2.processes.length ? (

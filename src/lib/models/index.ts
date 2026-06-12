@@ -31,3 +31,4 @@ export * from "./failed-job";
 export * from "./lead";
 export * from "./ticket";
 export * from "./entitlement";
+export * from "./system-log";

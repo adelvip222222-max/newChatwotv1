@@ -9,6 +9,7 @@ import { connectToDatabase } from "@/lib/mongodb";
 import { BillingPlan, Bot, Tenant, TenantSubscription, User } from "@/lib/models";
 import { slugifyArabic } from "@/lib/strings";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { logSystemEvent } from "@/lib/system-logger";
 
 function getAuthRequestIp(req?: { headers?: Record<string, string | string[] | undefined> }) {
   const forwardedFor = req?.headers?.["x-forwarded-for"];
@@ -31,12 +32,17 @@ async function provisionOAuthUser(nextAuthUser: any, profile: any) {
   let user = await User.findOne({ email });
 
   if (user) {
-    if (user.isActive === false || !user.tenantId) return false;
+    if (user.isActive === false || !user.tenantId) {
+      logSystemEvent({ eventType: "login_failed", email, severity: "warning", details: { reason: "OAuth user inactive or missing tenant" }});
+      return false;
+    }
     const tenant = await Tenant.findOne({ _id: user.tenantId, isActive: true });
     if (!tenant) return false;
 
     user.lastLoginAt = new Date();
     await user.save();
+
+    logSystemEvent({ eventType: "login_success", email, userId: user._id.toString(), details: { method: "oauth_google" }});
 
     nextAuthUser.id = user._id.toString();
     nextAuthUser.name = user.name;
@@ -94,6 +100,8 @@ async function provisionOAuthUser(nextAuthUser: any, profile: any) {
     });
   }
 
+  logSystemEvent({ eventType: "login_success", email, userId: user._id.toString(), details: { method: "oauth_google_new" }});
+
   nextAuthUser.id = user._id.toString();
   nextAuthUser.name = user.name;
   nextAuthUser.email = user.email;
@@ -122,22 +130,37 @@ export const authOptions: AuthOptions = {
       async authorize(credentials, req) {
         const email = credentials?.email?.toLowerCase().trim();
         const password = credentials?.password;
+        const ipAddress = getAuthRequestIp(req);
 
         if (!email || !password) return null;
-        checkRateLimit(`login:${getAuthRequestIp(req)}:${email}`, { limit: 10, windowMs: 15 * 60_000 });
+        
+        try {
+          checkRateLimit(`login:${ipAddress}:${email}`, { limit: 10, windowMs: 15 * 60_000 });
+        } catch (err) {
+          logSystemEvent({ eventType: "rate_limit_exceeded", email, ipAddress, severity: "warning", details: { reason: "Too many login attempts" } });
+          throw err;
+        }
 
         await connectToDatabase();
         const user = await User.findOne({ email }).select("+password");
-        if (!user?.password || user.isActive === false) return null;
+        if (!user?.password || user.isActive === false) {
+          logSystemEvent({ eventType: "login_failed", email, ipAddress, severity: "warning", details: { reason: "User not found or inactive" } });
+          return null;
+        }
 
         const isValid = await bcrypt.compare(password, user.password);
-        if (!isValid || !user.tenantId) return null;
+        if (!isValid || !user.tenantId) {
+          logSystemEvent({ eventType: "login_failed", email, ipAddress, severity: "warning", details: { reason: "Invalid credentials" } });
+          return null;
+        }
 
         const tenant = await Tenant.findOne({ _id: user.tenantId, isActive: true });
         if (!tenant) return null;
 
         user.lastLoginAt = new Date();
         await user.save();
+
+        logSystemEvent({ eventType: "login_success", email, userId: user._id.toString(), ipAddress, details: { method: "credentials" } });
 
         return {
           id: user._id.toString(),
