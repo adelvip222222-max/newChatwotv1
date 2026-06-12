@@ -1,4 +1,6 @@
 import { Agent } from "@mastra/core/agent";
+import { TokenLimiterProcessor, UnicodeNormalizer } from "@mastra/core/processors";
+import { Memory } from "@mastra/memory";
 import { searchKnowledgeTool } from "@/mastra/tools/search-knowledge.tool";
 
 export const customerSupportAgent = new Agent({
@@ -18,5 +20,41 @@ export const customerSupportAgent = new Agent({
   tools: {
     searchKnowledge: searchKnowledgeTool,
   },
+  memory: new Memory({
+    options: {
+      lastMessages: 20,
+      workingMemory: {
+        enabled: true,
+        scope: "resource",
+        template: [
+          "# Customer Profile",
+          "- Name:",
+          "- Preferred language:",
+          "- Communication style:",
+          "- Known products or services of interest:",
+          "- Open issues:",
+          "- Important constraints:",
+        ].join("\n"),
+      },
+    },
+  }),
+  inputProcessors: [
+    new UnicodeNormalizer({
+      stripControlChars: true,
+      collapseWhitespace: true,
+    }),
+    new TokenLimiterProcessor({
+      limit: 12000,
+      strategy: "truncate",
+      trimMode: "best-fit",
+    }),
+  ],
+  outputProcessors: [
+    new TokenLimiterProcessor({
+      limit: 1200,
+      strategy: "truncate",
+      countMode: "part",
+    }),
+  ],
 });
 

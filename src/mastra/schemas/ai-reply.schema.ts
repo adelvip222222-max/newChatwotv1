@@ -8,6 +8,7 @@ export const aiReplyInputSchema = z.object({
   externalUserId: z.string().min(1),
   channel: z.string().min(1),
   message: z.string().min(1),
+  metadata: z.record(z.unknown()).optional(),
   traceId: z.string().optional(),
 });
 
