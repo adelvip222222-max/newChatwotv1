@@ -1,7 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { requireSession } from "@/lib/auth";
 import { connectToDatabase } from "@/lib/mongodb";
 import { Conversation, Message } from "@/lib/models";
+
+const attachmentSchema = z.object({
+  id: z.string(),
+  type: z.enum(["image", "audio", "file"]),
+  key: z.string(),
+  url: z.string().optional(),
+  name: z.string(),
+  mimeType: z.string(),
+  size: z.number().int().positive(),
+});
+
+const schema = z.object({
+  content: z.string().optional().default(""),
+  attachments: z.array(attachmentSchema).max(6).optional().default([]),
+});
 
 export async function POST(
   request: NextRequest,
@@ -10,10 +26,11 @@ export async function POST(
   try {
     const session = await requireSession();
     const { id } = await params;
-    const body = await request.json();
-    const { content } = body;
+    const body = schema.parse(await request.json());
+    const content = body.content.trim();
+    const attachments = body.attachments;
 
-    if (!content?.trim()) {
+    if (!content && !attachments.length) {
       return NextResponse.json({ error: "Message content is required" }, { status: 400 });
     }
 
@@ -33,7 +50,8 @@ export async function POST(
       botId: conversation.botId,
       conversationId: conversation._id,
       sender: "agent",
-      content: content.trim(),
+      content: content || "مرفق",
+      attachments,
     });
 
     // If a human is replying, maybe we automatically set the conversation to human
@@ -48,6 +66,7 @@ export async function POST(
         id: message._id.toString(),
         sender: message.sender,
         content: message.content,
+        attachments: message.attachments || [],
         createdAt: message.createdAt?.toISOString(),
       },
     });

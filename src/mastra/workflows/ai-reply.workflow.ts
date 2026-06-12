@@ -14,6 +14,10 @@ import { checkContentModeration } from "@/lib/moderation";
 import { getMastraMaxToolCalls } from "@/lib/ai/orchestrator-flags";
 import { validateCustomerReply } from "@/lib/ai/reply-validators";
 import {
+  describeAttachmentsForAi,
+  type MessageAttachment,
+} from "@/lib/attachments";
+import {
   classifyTicketIntent,
   ensureTicketForConversation,
   type TicketCategory,
@@ -112,6 +116,24 @@ const aiReplyRunContextSchema = aiReplyInputSchema.extend({
 
 type AiReplyRunContext = z.infer<typeof aiReplyRunContextSchema>;
 type AiReplyTicketContext = NonNullable<AiReplyRunContext["ticket"]>;
+
+function getInputAttachments(metadata: Record<string, unknown> | undefined) {
+  const attachments = metadata?.attachments;
+  if (!Array.isArray(attachments)) return [];
+
+  return attachments.filter((attachment): attachment is MessageAttachment => {
+    if (!attachment || typeof attachment !== "object") return false;
+    const item = attachment as Partial<MessageAttachment>;
+    return Boolean(
+      item.id &&
+        item.key &&
+        item.name &&
+        item.mimeType &&
+        typeof item.size === "number" &&
+        (item.type === "image" || item.type === "audio" || item.type === "file")
+    );
+  });
+}
 
 function getTimeoutMs() {
   const value = Number(process.env.MASTRA_TIMEOUT_MS || 30000);
@@ -214,12 +236,19 @@ const loadConversationStep = createStep({
 
     if (!conversation) throw new Error("تعذر العثور على المحادثة.");
 
+    const attachments = getInputAttachments(inputData.metadata);
+    const attachmentDescription = describeAttachmentsForAi(attachments);
+    const contentForStorage = attachmentDescription
+      ? `${inputData.message}\n\nمرفقات العميل: ${attachmentDescription}`
+      : inputData.message;
+
     const userMessage = await Message.create({
       tenantId: inputData.tenantId,
       botId: inputData.botId,
       conversationId: conversation._id,
       sender: "user",
-      content: inputData.message,
+      content: contentForStorage,
+      attachments,
       metadata: inputData.metadata || {},
     });
 
@@ -437,10 +466,16 @@ const generateReplyStep = createStep({
 
     const timeout = withTimeoutSignal();
     const modelName = process.env.MASTRA_DEFAULT_MODEL || "openai/gpt-4o-mini";
+    const attachmentDescription = describeAttachmentsForAi(
+      getInputAttachments(inputData.metadata)
+    );
+    const userPrompt = attachmentDescription
+      ? `${inputData.message}\n\nمرفقات العميل: ${attachmentDescription}\nإذا كان حل الطلب يتطلب قراءة محتوى الملف نفسه ولا يوجد نص كاف، اطلب توضيحاً أو حوّل الطلب لفريق الدعم.`
+      : inputData.message;
 
     try {
       const agent = mastra.getAgentById("customer-support-agent");
-      const result = await agent.generate(inputData.message, {
+      const result = await agent.generate(userPrompt, {
         instructions,
         maxSteps: getMastraMaxToolCalls(),
         abortSignal: timeout.signal,

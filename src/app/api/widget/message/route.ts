@@ -9,8 +9,13 @@ const schema = z.object({
   visitorId: z.string().min(1),
   message: z.string().min(1),
   attachments: z.array(z.object({
-    type: z.enum(["image", "audio"]),
+    id: z.string().optional(),
+    type: z.enum(["image", "audio", "file"]),
+    key: z.string().optional(),
+    url: z.string().optional(),
     name: z.string(),
+    mimeType: z.string().optional(),
+    size: z.number().optional(),
     dataUrl: z.string().optional()
   })).optional()
 });
@@ -28,7 +33,7 @@ export async function POST(request: Request) {
         ? `${body.message}\n\nمرفقات المستخدم: ${body.attachments.map((item) => `${item.type}: ${item.name}`).join(", ")}`
         : body.message,
       metadata: {
-        attachments: body.attachments || []
+        attachments: (body.attachments || []).filter((item) => item.id && item.key)
       }
     });
 

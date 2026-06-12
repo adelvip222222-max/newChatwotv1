@@ -2,12 +2,23 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { Save } from "lucide-react";
+import { FileText, Save } from "lucide-react";
+
+type Attachment = {
+  id: string;
+  type: "image" | "audio" | "file";
+  key: string;
+  url?: string;
+  name: string;
+  mimeType: string;
+  size: number;
+};
 
 type TicketMessage = {
   id: string;
   sender: string;
   content: string;
+  attachments?: Attachment[];
   createdAt: string;
 };
 
@@ -181,6 +192,13 @@ export function TicketDetailClient({ ticket }: { ticket: TicketDetail }) {
                       {message.sender === "assistant" ? ticket.botName : message.sender === "agent" ? "موظف الدعم" : "العميل"}
                     </p>
                     <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
+                    {message.attachments?.length ? (
+                      <div className="mt-3 space-y-2">
+                        {message.attachments.map((attachment) => (
+                          <AttachmentPreview key={attachment.id} attachment={attachment} />
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               );
@@ -233,6 +251,45 @@ export function TicketDetailClient({ ticket }: { ticket: TicketDetail }) {
         </div>
       </aside>
     </div>
+  );
+}
+
+function AttachmentPreview({ attachment }: { attachment: Attachment }) {
+  const url = attachment.url || "";
+  const sizeKb = Math.round(attachment.size / 1024);
+
+  if (attachment.type === "image" && url) {
+    return (
+      <a href={url} target="_blank" rel="noopener noreferrer" className="block">
+        <img
+          src={url}
+          alt={attachment.name}
+          className="max-h-56 rounded-lg border border-slate-200 object-contain"
+        />
+      </a>
+    );
+  }
+
+  if (attachment.type === "audio" && url) {
+    return (
+      <div className="rounded-lg border border-slate-200 bg-white/80 p-2">
+        <audio controls src={url} className="w-full" />
+        <p className="mt-1 text-xs opacity-70">{attachment.name} · {sizeKb}KB</p>
+      </div>
+    );
+  }
+
+  return (
+    <a
+      href={url || "#"}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white/80 p-3 text-sm hover:bg-slate-50"
+    >
+      <FileText size={18} />
+      <span className="truncate">{attachment.name}</span>
+      <span className="text-xs opacity-60">{sizeKb}KB</span>
+    </a>
   );
 }
 

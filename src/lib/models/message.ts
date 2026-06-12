@@ -7,6 +7,20 @@ const messageSchema = new Schema(
     conversationId: { type: Schema.Types.ObjectId, ref: "Conversation", required: true, index: true },
     sender: { type: String, enum: ["user", "assistant", "agent", "system"], required: true },
     content: { type: String, required: true },
+    attachments: {
+      type: [
+        {
+          id: { type: String, required: true },
+          type: { type: String, enum: ["image", "audio", "file"], required: true },
+          key: { type: String, required: true },
+          url: { type: String, default: "" },
+          name: { type: String, required: true },
+          mimeType: { type: String, required: true },
+          size: { type: Number, required: true },
+        },
+      ],
+      default: [],
+    },
     metadata: { type: Schema.Types.Mixed, default: {} }
   },
   { timestamps: true }

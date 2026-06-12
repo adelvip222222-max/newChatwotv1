@@ -91,6 +91,15 @@ export async function getConversationDetail(tenantId: string, id: string) {
       id: message._id.toString(),
       sender: message.sender,
       content: message.content,
+      attachments: (message.attachments || []).map((attachment) => ({
+        id: attachment.id,
+        type: attachment.type,
+        key: attachment.key,
+        url: attachment.url || "",
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        size: attachment.size
+      })),
       createdAt: message.createdAt?.toISOString() || ""
     }))
   };
@@ -159,6 +168,15 @@ export async function getTicketDetail(tenantId: string, id: string) {
       id: message._id.toString(),
       sender: message.sender,
       content: message.content,
+      attachments: (message.attachments || []).map((attachment) => ({
+        id: attachment.id,
+        type: attachment.type,
+        key: attachment.key,
+        url: attachment.url || "",
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        size: attachment.size
+      })),
       createdAt: message.createdAt?.toISOString() || ""
     }))
   };
