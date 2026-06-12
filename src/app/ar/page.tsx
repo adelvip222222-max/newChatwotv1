@@ -4,8 +4,6 @@ import { connectToDatabase } from "@/lib/mongodb";
 import { Bot } from "@/lib/models/bot";
 import { LandingPage } from "@/components/landing/landing-page";
 
-export const dynamic = "force-dynamic";
-
 export default async function ArabicHomePage() {
   await connectToDatabase();
   let query: any = { isActive: true };

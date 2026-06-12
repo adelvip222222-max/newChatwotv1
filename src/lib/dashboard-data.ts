@@ -83,9 +83,12 @@ export async function getConversationDetail(tenantId: string, id: string) {
   await connectToDatabase();
   const conversation = await Conversation.findOne({ _id: id, tenantId }).lean();
   if (!conversation) return null;
-  const [bot, messages] = await Promise.all([
+  const [bot, messages, ticket] = await Promise.all([
     Bot.findById(conversation.botId).lean(),
-    Message.find({ conversationId: conversation._id, tenantId }).sort({ createdAt: 1 }).lean()
+    Message.find({ conversationId: conversation._id, tenantId }).sort({ createdAt: 1 }).lean(),
+    Ticket.findOne({ conversationId: conversation._id, tenantId, status: { $in: ["open", "in_progress", "pending"] } })
+      .sort({ createdAt: -1 })
+      .lean()
   ]);
   return {
     id: conversation._id.toString(),
@@ -93,6 +96,16 @@ export async function getConversationDetail(tenantId: string, id: string) {
     channel: conversation.channel,
     externalUserId: conversation.externalUserId,
     status: conversation.status,
+    ticket: ticket
+      ? {
+          id: ticket._id.toString(),
+          number: ticket.number || 0,
+          subject: ticket.subject || ticket.title,
+          status: ticket.status,
+          priority: ticket.priority,
+          category: ticket.category || "general"
+        }
+      : null,
     messages: messages.map((message) => ({
       id: message._id.toString(),
       sender: message.sender,
