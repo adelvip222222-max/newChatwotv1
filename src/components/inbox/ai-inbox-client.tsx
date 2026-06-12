@@ -175,6 +175,15 @@ type Props = {
   currentUserId: string;
 };
 
+type InboxTool =
+  | "filters"
+  | "ai"
+  | "customer"
+  | "assignment"
+  | "notes"
+  | "replies"
+  | "actions";
+
 type RealtimeMessageCreatedPayload = {
   message?: {
     id?: string;
@@ -415,8 +424,7 @@ export function AIInboxClient({
   const detail = detailData || null;
   const loadingDetail = isDetailValidating && !detailData;
   const [listDrawerOpen, setListDrawerOpen] = useState(false);
-  const [detailsDrawerOpen, setDetailsDrawerOpen] = useState(false);
-  const [savedRepliesOpen, setSavedRepliesOpen] = useState(false);
+  const [activeTool, setActiveTool] = useState<InboxTool | null>(null);
   const [recordingAudio, setRecordingAudio] = useState(false);
 
   const audioChunksRef = useRef<Blob[]>([]);
@@ -427,7 +435,41 @@ export function AIInboxClient({
   const noteRef = useRef<HTMLTextAreaElement | null>(null);
   const timelineRef = useRef<HTMLDivElement | null>(null);
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
+  const toolPanelRef = useRef<HTMLElement | null>(null);
   void currentUserId;
+
+  const toggleTool = useCallback((tool: InboxTool) => {
+    setActiveTool((current) => (current === tool ? null : tool));
+  }, []);
+
+  const closeTool = useCallback(() => {
+    setActiveTool(null);
+  }, []);
+
+  useEffect(() => {
+    if (!activeTool) return;
+
+    const handlePointerDown = (event: MouseEvent | TouchEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+      if (toolPanelRef.current?.contains(target)) return;
+      if (target.closest("[data-inbox-tool-trigger]")) return;
+      setActiveTool(null);
+    };
+
+    const handleKeydown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setActiveTool(null);
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("touchstart", handlePointerDown);
+    window.addEventListener("keydown", handleKeydown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("touchstart", handlePointerDown);
+      window.removeEventListener("keydown", handleKeydown);
+    };
+  }, [activeTool]);
 
   const listParams = useMemo(() => {
     const params = new URLSearchParams();
@@ -837,7 +879,7 @@ export function AIInboxClient({
 
   const listPane = (
     <section className="flex h-full min-h-0 flex-col bg-white dark:bg-slate-950">
-      <div className="shrink-0 border-b border-slate-200 p-3 dark:border-slate-800">
+      <div className="shrink-0 border-b border-slate-200 p-4 dark:border-slate-800">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-sm font-bold">
@@ -856,104 +898,6 @@ export function AIInboxClient({
           >
             <X size={17} className="mx-auto" />
           </button>
-        </div>
-
-        <div className="mt-2 flex items-center gap-2 text-[11px] font-bold text-slate-500 dark:text-slate-400">
-          <span className="rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-blue-700 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-300">AI {analytics.aiResolutionRate}%</span>
-          <span className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-amber-700 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300">ESC {analytics.escalationRate}%</span>
-        </div>
-
-        <div className="mt-2 flex gap-1 overflow-x-auto pb-1 no-scrollbar">
-          {viewItems.map((item) => {
-            const Icon = item.icon;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => setView(item.id)}
-                className={`inline-flex h-9 shrink-0 items-center gap-2 rounded-md px-2.5 text-xs font-semibold transition ${
-                  view === item.id
-                    ? "bg-slate-900 text-white dark:bg-white dark:text-slate-950"
-                    : "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
-                }`}
-              >
-                <Icon size={15} />
-                <span>{labels[item.key]}</span>
-              </button>
-            );
-          })}
-        </div>
-
-        <div className="mt-2 relative">
-          <Search className="pointer-events-none absolute left-3 top-2.5 text-slate-400 rtl:left-auto rtl:right-3" size={16} />
-          <input
-            ref={searchRef}
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            className="field h-10 rounded-md pl-9 pr-3 text-sm rtl:pl-3 rtl:pr-9"
-            placeholder={labels.search}
-          />
-        </div>
-
-        <div className="mt-2 grid grid-cols-[1fr_1fr_auto] gap-2">
-          <Select label={labels.status} value={status} onChange={setStatus} options={["open", "pending", "resolved", "closed", "snoozed", "archived"]} />
-          <Select label={labels.priority} value={priority} onChange={setPriority} options={["low", "medium", "high", "urgent"]} />
-          <button type="button" className="btn-secondary h-10 px-2 text-xs" onClick={() => void fetchList(false)}>
-            <Filter size={15} />
-            <span className="hidden sm:inline lg:hidden xl:inline">{labels.filters}</span>
-          </button>
-        </div>
-
-        <div className="mt-2 flex gap-1 overflow-x-auto pb-1 no-scrollbar">
-          <button
-            type="button"
-            onClick={() => setChannel("")}
-            className={`inline-flex h-8 shrink-0 items-center rounded-md px-2 text-xs font-semibold ${
-              !channel ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600 dark:bg-slate-900 dark:text-slate-300"
-            }`}
-          >
-            {labels.all}
-          </button>
-          {channels.map((item) => (
-            <button
-              key={item}
-              type="button"
-              onClick={() => setChannel(channel === item ? "" : item)}
-              className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-xs font-semibold capitalize transition ${
-                channel === item ? "bg-blue-50 text-blue-700 ring-1 ring-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:ring-blue-900" : "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
-              }`}
-            >
-              <ChannelGlyph channel={item} />
-              <span>{channelLabel(item)}</span>
-            </button>
-          ))}
-        </div>
-
-        <div className="mt-2 flex gap-1 overflow-x-auto pb-1 no-scrollbar">
-          {["VIP Customers", "Urgent", "AI Escalations"].map((item) => (
-            <button
-              key={item}
-              type="button"
-              onClick={() => setTagFilter(tagFilter === item ? "" : item)}
-              className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-xs font-semibold ${
-                tagFilter === item ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-300 dark:ring-emerald-900" : "bg-slate-100 text-slate-600 dark:bg-slate-900 dark:text-slate-300"
-              }`}
-            >
-              <Tag size={13} />
-              {item}
-            </button>
-          ))}
-        </div>
-
-      <div className="mt-2 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-          {selectedIds.length ? (
-            <button type="button" onClick={() => void bulkResolve()} className="font-semibold text-emerald-700 dark:text-emerald-300">
-              {labels.bulkResolve} {selectedIds.length}
-            </button>
-          ) : (
-            <span>{loadingList ? "..." : `${conversations.length} ${labels.loaded}`}</span>
-          )}
-          <span>{loadingDetail ? "..." : activeConversation?.assigneeName || activeConversation?.agentStatus || ""}</span>
         </div>
       </div>
 
@@ -994,23 +938,145 @@ export function AIInboxClient({
     </section>
   );
 
-  const detailsPane = detail ? (
-    <aside className="flex h-full min-h-0 flex-col overflow-y-auto bg-white dark:bg-slate-950">
-      <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-white/95 p-3 backdrop-blur dark:border-slate-800 dark:bg-slate-950/95">
-        <div className="min-w-0">
-          <h2 className="truncate text-sm font-bold">{labels.openDetails}</h2>
-          <p className="truncate text-xs text-slate-500 dark:text-slate-400">{detail.conversation.contact.name}</p>
-        </div>
-        <button
-          type="button"
-          className="touch-target rounded-md border border-slate-200 text-slate-500 dark:border-slate-800 dark:text-slate-300 xl:hidden"
-          onClick={() => setDetailsDrawerOpen(false)}
-          aria-label={labels.close}
-        >
-          <X size={17} className="mx-auto" />
-        </button>
-      </div>
+  const filterCount = [
+    view !== "inbox" ? view : "",
+    query,
+    channel,
+    status,
+    priority,
+    agent,
+    team,
+    tagFilter
+  ].filter(Boolean).length;
 
+  const filtersPanel = (
+    <div className="space-y-5 p-4">
+      <section>
+        <div className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">{labels.savedViews}</div>
+        <div className="grid grid-cols-2 gap-2">
+          {viewItems.map((item) => {
+            const Icon = item.icon;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setView(item.id)}
+                className={`inline-flex h-10 items-center gap-2 rounded-md px-3 text-xs font-semibold transition ${
+                  view === item.id
+                    ? "bg-slate-900 text-white dark:bg-white dark:text-slate-950"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+                }`}
+              >
+                <Icon size={15} />
+                <span className="truncate">{labels[item.key]}</span>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      <section>
+        <label className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-400" htmlFor="inbox-search">
+          {labels.search}
+        </label>
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-3 top-2.5 text-slate-400 rtl:left-auto rtl:right-3" size={16} />
+          <input
+            id="inbox-search"
+            ref={searchRef}
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            className="field h-10 rounded-md pl-9 pr-3 text-sm rtl:pl-3 rtl:pr-9"
+            placeholder={labels.search}
+          />
+        </div>
+      </section>
+
+      <section className="grid grid-cols-2 gap-2">
+        <Select label={labels.status} value={status} onChange={setStatus} options={["open", "pending", "resolved", "closed", "snoozed", "archived"]} />
+        <Select label={labels.priority} value={priority} onChange={setPriority} options={["low", "medium", "high", "urgent"]} />
+        <label className="block">
+          <span className="sr-only">{labels.agent}</span>
+          <select value={agent} onChange={(event) => setAgent(event.target.value)} className="field h-10 rounded-md text-xs">
+            <option value="">{labels.agent}</option>
+            {agents.map((item) => (
+              <option key={item.id} value={item.id}>{item.name}</option>
+            ))}
+          </select>
+        </label>
+        <label className="block">
+          <span className="sr-only">{labels.team}</span>
+          <select value={team} onChange={(event) => setTeam(event.target.value)} className="field h-10 rounded-md text-xs">
+            <option value="">{labels.team}</option>
+            {teams.map((item) => (
+              <option key={item.id} value={item.id}>{item.name}</option>
+            ))}
+          </select>
+        </label>
+      </section>
+
+      <section>
+        <div className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">{labels.channels}</div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setChannel("")}
+            className={`inline-flex h-9 shrink-0 items-center rounded-md px-2 text-xs font-semibold ${
+              !channel ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600 dark:bg-slate-900 dark:text-slate-300"
+            }`}
+          >
+            {labels.all}
+          </button>
+          {channels.map((item) => (
+            <button
+              key={item}
+              type="button"
+              onClick={() => setChannel(channel === item ? "" : item)}
+              className={`inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md px-2 text-xs font-semibold capitalize transition ${
+                channel === item ? "bg-blue-50 text-blue-700 ring-1 ring-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:ring-blue-900" : "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+              }`}
+            >
+              <ChannelGlyph channel={item} />
+              <span>{channelLabel(item)}</span>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section>
+        <div className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Tags</div>
+        <div className="flex flex-wrap gap-2">
+          {["VIP Customers", "Urgent", "AI Escalations"].map((item) => (
+            <button
+              key={item}
+              type="button"
+              onClick={() => setTagFilter(tagFilter === item ? "" : item)}
+              className={`inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md px-2 text-xs font-semibold ${
+                tagFilter === item ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-300 dark:ring-emerald-900" : "bg-slate-100 text-slate-600 dark:bg-slate-900 dark:text-slate-300"
+              }`}
+            >
+              <Tag size={13} />
+              {item}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="grid grid-cols-3 gap-2">
+        <Metric label={labels.open} value={String(analytics.openCount)} />
+        <Metric label="AI" value={`${analytics.aiResolutionRate}%`} />
+        <Metric label="ESC" value={`${analytics.escalationRate}%`} tone="amber" />
+      </section>
+
+      <button type="button" className="btn-secondary w-full justify-center" onClick={() => void fetchList(false)}>
+        <RefreshCcw size={15} />
+        {locale === "ar" ? "تحديث القائمة" : "Refresh inbox"}
+      </button>
+    </div>
+  );
+
+  const aiPanel = detail ? (
+    <div>
       <Panel title={labels.copilot} icon={<Brain size={16} />}>
         <div className="space-y-3 text-sm">
           <InfoBlock label={labels.summary} value={detail.insight.summary} />
@@ -1033,6 +1099,68 @@ export function AIInboxClient({
         </div>
       </Panel>
 
+      <Panel title={labels.aiReplies} icon={<Sparkles size={16} />}>
+        <div className="space-y-2">
+          {detail.insight.suggestedReplies.length ? detail.insight.suggestedReplies.map((reply) => (
+            <div key={reply.id} className="rounded-md border border-slate-200 p-3 text-sm dark:border-slate-800">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <span className="font-bold">{reply.label}</span>
+                <Badge tone="blue">{reply.confidence}%</Badge>
+              </div>
+              <p className="text-xs leading-5 text-slate-500 dark:text-slate-400">{reply.text}</p>
+              <div className="mt-3 flex gap-2">
+                <button type="button" className="btn-secondary h-9 flex-1 justify-center text-xs" onClick={() => { setComposer(reply.text); closeTool(); composerRef.current?.focus(); }}>
+                  {labels.insert}
+                </button>
+                <button type="button" className="btn-primary h-9 flex-1 justify-center text-xs" onClick={() => { closeTool(); void sendReply(reply.text, false); }}>
+                  {labels.sendSuggestion}
+                </button>
+              </div>
+            </div>
+          )) : (
+            <div className="rounded-md bg-slate-50 p-3 text-sm text-slate-500 dark:bg-slate-900 dark:text-slate-400">-</div>
+          )}
+        </div>
+      </Panel>
+
+      <Panel title="AI tools" icon={<Wand2 size={16} />}>
+        <div className="space-y-3">
+          <div className="flex flex-wrap gap-2">
+            {smartActions.map(([id, label]) => (
+              <button key={id} type="button" className="inline-flex h-9 shrink-0 items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 text-xs font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-50 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-300" disabled={aiBusy} onClick={() => { closeTool(); void requestSmartReply(id); }}>
+                <Sparkles size={13} />
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {rewriteActions.map(([id, label]) => (
+              <button key={id} type="button" className="inline-flex h-9 shrink-0 items-center gap-1 rounded-md border border-slate-200 px-2 text-xs font-semibold hover:bg-slate-50 disabled:opacity-50 dark:border-slate-800 dark:hover:bg-slate-900" disabled={aiBusy || !composer.trim()} onClick={() => { closeTool(); void rewriteComposer(id); }}>
+                <Wand2 size={13} />
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </Panel>
+
+      <Panel title="Knowledge suggestions" icon={<FileText size={16} />}>
+        <div className="space-y-2">
+          {detail.insight.knowledgeSources.length ? detail.insight.knowledgeSources.map((source) => (
+            <a key={source.documentId || source.url || source.title} href={source.url || "#"} target="_blank" rel="noreferrer" className="block rounded-md border border-slate-200 p-3 text-sm hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-900">
+              <div className="font-bold">{source.title}</div>
+              <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">Score {source.score}</div>
+            </a>
+          )) : (
+            <div className="rounded-md bg-slate-50 p-3 text-sm text-slate-500 dark:bg-slate-900 dark:text-slate-400">-</div>
+          )}
+        </div>
+      </Panel>
+    </div>
+  ) : null;
+
+  const customerPanel = detail ? (
+    <div>
       <Panel title={labels.customer} icon={<User size={16} />}>
         <div className="space-y-2 text-sm">
           <ContactLine icon={<Mail size={14} />} value={detail.conversation.contact.email || "-"} />
@@ -1047,23 +1175,6 @@ export function AIInboxClient({
         </div>
       </Panel>
 
-      <Panel title={labels.assign} icon={<Users size={16} />}>
-        <div className="space-y-2">
-          <select className="field" value={detail.conversation.assigneeId} onChange={(event) => void updateAssignment(event.target.value, detail.conversation.teamId)}>
-            <option value="">Unassigned</option>
-            {agents.map((item) => (
-              <option key={item.id} value={item.id}>{item.name}</option>
-            ))}
-          </select>
-          <select className="field" value={detail.conversation.teamId} onChange={(event) => void updateAssignment(detail.conversation.assigneeId, event.target.value)}>
-            <option value="">No team</option>
-            {teams.map((item) => (
-              <option key={item.id} value={item.id}>{item.name}</option>
-            ))}
-          </select>
-        </div>
-      </Panel>
-
       <Panel title={labels.sla} icon={<Timer size={16} />}>
         <div className="grid grid-cols-2 gap-2 text-xs">
           <MiniStat label="First response" value={formatDuration(detail.conversation.firstResponseMs)} tone={slaTone(detail.conversation.slaStatus)} />
@@ -1073,31 +1184,142 @@ export function AIInboxClient({
         </div>
       </Panel>
 
-      <Panel title={labels.internalNote} icon={<StickyNote size={16} />}>
-        <div className="space-y-2">
-          <div className="flex gap-2">
-            <button type="button" onClick={() => setNoteVisibility("internal")} className={`flex-1 rounded-md px-2 py-1 text-xs font-bold ${noteVisibility === "internal" ? "bg-slate-900 text-white dark:bg-white dark:text-slate-950" : "bg-slate-100 dark:bg-slate-900"}`}>
-              {labels.internalNote}
-            </button>
-            <button type="button" onClick={() => setNoteVisibility("team")} className={`flex-1 rounded-md px-2 py-1 text-xs font-bold ${noteVisibility === "team" ? "bg-slate-900 text-white dark:bg-white dark:text-slate-950" : "bg-slate-100 dark:bg-slate-900"}`}>
-              {labels.teamNote}
-            </button>
+      <Panel title="Channel & tags" icon={<Tag size={16} />}>
+        <div className="space-y-3 text-sm">
+          <ContactLine icon={<ChannelGlyph channel={detail.conversation.channel} />} value={channelLabel(detail.conversation.channel)} />
+          <div className="flex flex-wrap gap-2">
+            {detail.conversation.labels.length ? detail.conversation.labels.map((label) => (
+              <Badge key={label} tone={badgeTone(label)}>{label}</Badge>
+            )) : (
+              <span className="text-xs text-slate-400">-</span>
+            )}
           </div>
-          <textarea ref={noteRef} className="field min-h-24 resize-none" value={note} onChange={(event) => setNote(event.target.value)} />
-          <button type="button" className="btn-secondary w-full" disabled={!note.trim()} onClick={() => void addNote()}>
-            {labels.addNote}
-          </button>
         </div>
       </Panel>
-    </aside>
-  ) : (
-    <div className="flex h-full items-center justify-center p-6 text-center text-sm text-slate-500 dark:text-slate-400">
-      {labels.noConversation}
+    </div>
+  ) : null;
+
+  const assignmentPanel = detail ? (
+    <Panel title={labels.assign} icon={<Users size={16} />}>
+      <div className="space-y-2">
+        <select className="field" value={detail.conversation.assigneeId} onChange={(event) => { closeTool(); void updateAssignment(event.target.value, detail.conversation.teamId); }}>
+          <option value="">Unassigned</option>
+          {agents.map((item) => (
+            <option key={item.id} value={item.id}>{item.name}</option>
+          ))}
+        </select>
+        <select className="field" value={detail.conversation.teamId} onChange={(event) => { closeTool(); void updateAssignment(detail.conversation.assigneeId, event.target.value); }}>
+          <option value="">No team</option>
+          {teams.map((item) => (
+            <option key={item.id} value={item.id}>{item.name}</option>
+          ))}
+        </select>
+      </div>
+    </Panel>
+  ) : null;
+
+  const notesPanel = detail ? (
+    <Panel title={labels.internalNote} icon={<StickyNote size={16} />}>
+      <div className="space-y-2">
+        <div className="flex gap-2">
+          <button type="button" onClick={() => setNoteVisibility("internal")} className={`flex-1 rounded-md px-2 py-1 text-xs font-bold ${noteVisibility === "internal" ? "bg-slate-900 text-white dark:bg-white dark:text-slate-950" : "bg-slate-100 dark:bg-slate-900"}`}>
+            {labels.internalNote}
+          </button>
+          <button type="button" onClick={() => setNoteVisibility("team")} className={`flex-1 rounded-md px-2 py-1 text-xs font-bold ${noteVisibility === "team" ? "bg-slate-900 text-white dark:bg-white dark:text-slate-950" : "bg-slate-100 dark:bg-slate-900"}`}>
+            {labels.teamNote}
+          </button>
+        </div>
+        <textarea ref={noteRef} className="field min-h-28 resize-none" value={note} onChange={(event) => setNote(event.target.value)} />
+        <button type="button" className="btn-secondary w-full justify-center" disabled={!note.trim()} onClick={() => { closeTool(); void addNote(); }}>
+          {labels.addNote}
+        </button>
+      </div>
+    </Panel>
+  ) : null;
+
+  const savedRepliesPanel = detail ? (
+    <Panel title={labels.savedReplies} icon={<MessageCircle size={16} />}>
+      <div className="space-y-2">
+        {savedReplies.length ? savedReplies.map((reply) => (
+          <button
+            key={reply.id}
+            type="button"
+            className="w-full rounded-md border border-slate-200 p-3 text-start text-sm hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-900"
+            onClick={() => { setComposer(reply.body); closeTool(); composerRef.current?.focus(); }}
+          >
+            <span className="block font-bold">{reply.title}</span>
+            <span className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500 dark:text-slate-400">{reply.body}</span>
+          </button>
+        )) : (
+          <div className="rounded-md bg-slate-50 p-3 text-sm text-slate-500 dark:bg-slate-900 dark:text-slate-400">-</div>
+        )}
+      </div>
+    </Panel>
+  ) : null;
+
+  const actionsPanel = (
+    <div className="space-y-3 p-4">
+      {selectedIds.length ? (
+        <button type="button" onClick={() => { closeTool(); void bulkResolve(); }} className="btn-primary w-full justify-center">
+          <Check size={15} />
+          {labels.bulkResolve} {selectedIds.length}
+        </button>
+      ) : null}
+      {detail?.conversation.aiPaused || detail?.conversation.mode === "human" ? (
+        <button type="button" className="btn-secondary w-full justify-center" onClick={() => { closeTool(); void resumeAi(); }}>
+          <Sparkles size={15} />
+          {labels.resumeAi}
+        </button>
+      ) : null}
+      <button type="button" className="btn-secondary w-full justify-center" disabled={!detail || loadingDetail} onClick={() => { closeTool(); if (detail) void fetchDetail(detail.conversation.id, true); }}>
+        <RefreshCcw size={15} />
+        {labels.refreshAi}
+      </button>
+      <button type="button" className="btn-primary w-full justify-center" disabled={!selectedId} onClick={() => { closeTool(); void changeStatus("resolved"); }}>
+        <Check size={15} />
+        Resolve
+      </button>
+      <button type="button" className="btn-secondary w-full justify-center" disabled={!selectedId} onClick={() => { closeTool(); void changeStatus("archived"); }}>
+        <Archive size={15} />
+        {labels.archive}
+      </button>
+      <button type="button" className="btn-secondary w-full justify-center text-red-600 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950/30" disabled={!selectedId} onClick={() => { closeTool(); void deleteConversation(); }}>
+        <Trash2 size={15} />
+        {labels.delete}
+      </button>
     </div>
   );
 
+  const toolItems: Array<{
+    id: InboxTool;
+    label: string;
+    icon: typeof Filter;
+    disabled?: boolean;
+    badge?: string;
+  }> = [
+    { id: "filters", label: labels.filters, icon: Filter, badge: filterCount ? String(filterCount) : undefined },
+    { id: "ai", label: labels.copilot, icon: Brain, disabled: !detail },
+    { id: "customer", label: labels.openDetails, icon: Info, disabled: !detail },
+    { id: "assignment", label: labels.assign, icon: Users, disabled: !detail },
+    { id: "notes", label: labels.internalNote, icon: StickyNote, disabled: !detail },
+    { id: "replies", label: labels.savedReplies, icon: MessageCircle, disabled: !detail },
+    { id: "actions", label: locale === "ar" ? "إجراءات المحادثة" : "Conversation actions", icon: MoreHorizontal, badge: selectedIds.length ? String(selectedIds.length) : undefined }
+  ];
+
+  const activeToolItem = toolItems.find((item) => item.id === activeTool);
+  const ActiveToolIcon = activeToolItem?.icon;
+  const activeToolContent =
+    activeTool === "filters" ? filtersPanel :
+    activeTool === "ai" ? aiPanel :
+    activeTool === "customer" ? customerPanel :
+    activeTool === "assignment" ? assignmentPanel :
+    activeTool === "notes" ? notesPanel :
+    activeTool === "replies" ? savedRepliesPanel :
+    activeTool === "actions" ? actionsPanel :
+    null;
+
   return (
-    <div className="-mt-5 -mx-4 -mb-mobile-nav grid grid-rows-1 h-[calc(100dvh-64px)] min-h-[400px] grid-cols-1 overflow-hidden border-t border-slate-200 bg-slate-100 text-slate-950 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 lg:-mt-6 lg:-mx-8 lg:-mb-6 lg:min-h-[400px] lg:grid-cols-[minmax(18rem,23rem)_minmax(0,1fr)] xl:grid-cols-[minmax(18rem,23rem)_minmax(0,1fr)_20rem]">
+    <div className="-mt-5 -mx-4 -mb-mobile-nav relative grid grid-rows-1 h-[calc(100dvh-64px)] min-h-[400px] grid-cols-1 overflow-hidden border-t border-slate-200 bg-slate-100 text-slate-950 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 lg:-mt-6 lg:-mx-8 lg:-mb-6 lg:min-h-[400px] lg:grid-cols-[minmax(18rem,22rem)_minmax(0,1fr)_4.5rem]">
       <aside className="hidden min-w-0 min-h-0 border-r border-slate-200 dark:border-slate-800 lg:block">
         {listPane}
       </aside>
@@ -1132,36 +1354,8 @@ export function AIInboxClient({
                 </div>
 
                 <div className="flex shrink-0 items-center gap-2">
-                  {detail.conversation.aiPaused || detail.conversation.mode === "human" ? (
-                    <button type="button" className="btn-secondary px-3 text-xs sm:text-sm" onClick={() => void resumeAi()}>
-                      <Sparkles size={15} />
-                      {labels.resumeAi}
-                    </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    className="touch-target rounded-md border border-slate-200 text-slate-600 dark:border-slate-800 dark:text-slate-300 xl:hidden"
-                    onClick={() => setDetailsDrawerOpen(true)}
-                    aria-label={labels.openDetails}
-                  >
-                    <Info size={18} className="mx-auto" />
-                  </button>
-                  <button type="button" className="btn-secondary hidden px-3 sm:inline-flex" onClick={() => void fetchDetail(detail.conversation.id, true)} disabled={loadingDetail}>
-                    <RefreshCcw size={15} />
-                    {labels.refreshAi}
-                  </button>
-                  <button type="button" className="btn-secondary hidden px-3 sm:inline-flex" onClick={() => void changeStatus("archived")}>
-                    <Archive size={15} />
-                    {labels.archive}
-                  </button>
-                  <button type="button" className="btn-secondary hidden px-3 text-red-600 hover:bg-red-50 sm:inline-flex dark:text-red-300 dark:hover:bg-red-950/30" onClick={() => void deleteConversation()}>
-                    <Trash2 size={15} />
-                    {labels.delete}
-                  </button>
-                  <button type="button" className="btn-primary hidden px-3 sm:inline-flex" onClick={() => void changeStatus("resolved")}>
-                    <Check size={15} />
-                    Resolve
-                  </button>
+                  <Badge tone={detail.conversation.mode === "human" ? "amber" : "blue"}>{detail.conversation.mode}</Badge>
+                  <Badge tone={detail.conversation.status === "resolved" ? "emerald" : "slate"}>{detail.conversation.status}</Badge>
                 </div>
               </div>
             </header>
@@ -1195,18 +1389,6 @@ export function AIInboxClient({
 
             <footer className="safe-bottom shrink-0 border-t border-slate-200 bg-white p-3 max-lg:pb-[calc(5.5rem+env(safe-area-inset-bottom))] shadow-[0_-12px_32px_rgba(15,23,42,0.08)] dark:border-slate-800 dark:bg-slate-950 sm:px-4">
               <div className="mx-auto max-w-4xl flex flex-col gap-2">
-                {savedRepliesOpen ? (
-                  <div className="flex gap-1 overflow-x-auto pb-1 no-scrollbar">
-                    {savedReplies.length ? savedReplies.slice(0, 8).map((reply) => (
-                      <button key={reply.id} type="button" className="inline-flex h-8 shrink-0 items-center rounded-md border border-slate-200 px-2 text-xs font-semibold hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-900" onClick={() => setComposer(reply.body)}>
-                        {reply.title}
-                      </button>
-                    )) : (
-                      <span className="text-xs text-slate-400">-</span>
-                    )}
-                  </div>
-                ) : null}
-
                 {draftAttachments.length ? (
                   <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
                     {draftAttachments.map((attachment) => (
@@ -1271,25 +1453,6 @@ export function AIInboxClient({
                     <span>{sendingReply ? labels.sending : labels.send}</span>
                   </button>
                 </div>
-
-                <div className="flex gap-1 overflow-x-auto pb-1 no-scrollbar">
-                  <button type="button" className="inline-flex h-8 shrink-0 items-center gap-1 rounded-md border border-slate-200 px-2 text-xs font-semibold hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-900" onClick={() => setSavedRepliesOpen((value) => !value)}>
-                    <MoreHorizontal size={13} />
-                    {labels.savedReplies}
-                  </button>
-                  {smartActions.map(([id, label]) => (
-                    <button key={id} type="button" className="inline-flex h-8 shrink-0 items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 text-xs font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-50 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-300" disabled={aiBusy} onClick={() => void requestSmartReply(id)}>
-                      <Sparkles size={13} />
-                      {label}
-                    </button>
-                  ))}
-                  {rewriteActions.map(([id, label]) => (
-                    <button key={id} type="button" className="inline-flex h-8 shrink-0 items-center gap-1 rounded-md border border-slate-200 px-2 text-xs font-semibold hover:bg-slate-50 disabled:opacity-50 dark:border-slate-800 dark:hover:bg-slate-900" disabled={aiBusy || !composer.trim()} onClick={() => void rewriteComposer(id)}>
-                      <Wand2 size={13} />
-                      {label}
-                    </button>
-                  ))}
-                </div>
               </div>
             </footer>
           </section>
@@ -1313,8 +1476,77 @@ export function AIInboxClient({
         ) : null}
       </main>
 
-      <aside className="hidden min-w-0 min-h-0 border-l border-slate-200 dark:border-slate-800 xl:block">
-        {detailsPane}
+      <aside className="hidden min-h-0 border-l border-slate-200 bg-white/95 px-2 py-3 dark:border-slate-800 dark:bg-slate-950/95 lg:flex lg:flex-col lg:items-center lg:gap-2">
+        {toolItems.map((item) => {
+          const Icon = item.icon;
+          const active = activeTool === item.id;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              data-inbox-tool-trigger
+              onClick={() => !item.disabled && toggleTool(item.id)}
+              disabled={item.disabled}
+              className={`relative flex h-11 w-11 items-center justify-center rounded-2xl border text-slate-600 transition dark:text-slate-300 ${
+                active
+                  ? "border-blue-200 bg-blue-50 text-blue-700 shadow-sm dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-300"
+                  : "border-transparent hover:border-slate-200 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:border-slate-800 dark:hover:bg-slate-900"
+              }`}
+              aria-label={item.label}
+              aria-expanded={active}
+              title={item.label}
+            >
+              <Icon size={19} />
+              {item.badge ? (
+                <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-blue-600 px-1 text-[10px] font-bold text-white">
+                  {item.badge}
+                </span>
+              ) : null}
+            </button>
+          );
+        })}
+      </aside>
+
+      <aside className="safe-bottom absolute inset-x-3 bottom-[calc(0.75rem+env(safe-area-inset-bottom))] z-30 rounded-2xl border border-slate-200 bg-white/95 p-1 shadow-2xl backdrop-blur dark:border-slate-800 dark:bg-slate-950/95 lg:hidden">
+        <div className="grid grid-cols-8 gap-1">
+          <button
+            type="button"
+            className="flex h-11 items-center justify-center rounded-xl text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-900"
+            onClick={() => setListDrawerOpen(true)}
+            aria-label={labels.openList}
+            title={labels.openList}
+          >
+            <Menu size={19} />
+          </button>
+          {toolItems.map((item) => {
+            const Icon = item.icon;
+            const active = activeTool === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                data-inbox-tool-trigger
+                onClick={() => !item.disabled && toggleTool(item.id)}
+                disabled={item.disabled}
+                className={`relative flex h-11 items-center justify-center rounded-xl transition ${
+                  active
+                    ? "bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300"
+                    : "text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-300 dark:hover:bg-slate-900"
+                }`}
+                aria-label={item.label}
+                aria-expanded={active}
+                title={item.label}
+              >
+                <Icon size={18} />
+                {item.badge ? (
+                  <span className="absolute right-0 top-0 flex h-4 min-w-4 items-center justify-center rounded-full bg-blue-600 px-1 text-[9px] font-bold text-white">
+                    {item.badge}
+                  </span>
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
       </aside>
 
       {listDrawerOpen ? (
@@ -1325,11 +1557,33 @@ export function AIInboxClient({
         </div>
       ) : null}
 
-      {detailsDrawerOpen ? (
-        <div className="fixed inset-0 z-50 bg-slate-950/40 xl:hidden">
-          <div className="safe-top safe-bottom ms-auto h-full w-[min(92vw,24rem)] max-w-full shadow-2xl">
-            {detailsPane}
-          </div>
+      {activeTool && activeToolItem && activeToolContent ? (
+        <div className="pointer-events-none fixed inset-0 z-40">
+          <section
+            ref={toolPanelRef}
+            className="pointer-events-auto safe-bottom fixed inset-x-0 bottom-0 max-h-[85dvh] overflow-hidden rounded-t-3xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-950 lg:inset-x-auto lg:bottom-6 lg:end-20 lg:top-20 lg:flex lg:w-[min(28rem,calc(100vw-7rem))] lg:flex-col lg:rounded-3xl"
+            role="dialog"
+            aria-modal="false"
+            aria-label={activeToolItem.label}
+          >
+            <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-4 py-3 dark:border-slate-800">
+              <div className="flex min-w-0 items-center gap-2">
+                {ActiveToolIcon ? <ActiveToolIcon size={18} /> : null}
+                <h2 className="truncate text-sm font-bold">{activeToolItem.label}</h2>
+              </div>
+              <button
+                type="button"
+                className="touch-target rounded-md border border-slate-200 text-slate-500 dark:border-slate-800 dark:text-slate-300"
+                onClick={closeTool}
+                aria-label={labels.close}
+              >
+                <X size={17} className="mx-auto" />
+              </button>
+            </div>
+            <div className="min-h-0 overflow-y-auto">
+              {activeToolContent}
+            </div>
+          </section>
         </div>
       ) : null}
     </div>
