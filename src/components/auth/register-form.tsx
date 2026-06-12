@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 
 import { useEffect, useState, useRef } from "react";
 import { signIn } from "next-auth/react";
@@ -243,10 +244,10 @@ export function RegisterForm() {
             </p>
           </div>
           <div className="grid gap-3">
-            <a href="/dashboard/channels" className="btn-primary w-full justify-center">
+            <Link href="/dashboard/channels" className="btn-primary w-full justify-center">
               <MessageCircle size={18} />
               {locale === "ar" ? "فتح صفحة القنوات" : "Open channels page"}
-            </a>
+            </Link>
             <button type="button" onClick={() => setStep(5)} className="btn-secondary w-full justify-center">
               {locale === "ar" ? "تخطي القنوات" : "Skip channels"}
             </button>
