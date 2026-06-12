@@ -180,11 +180,8 @@ function hasExplicitHumanRequest(message: string) {
   );
 }
 
-function handoffReplyFor(message: string) {
-  return /[اأإء-ي]/.test(message)
-    ? "تمام، سأحوّل طلبك لأحد أعضاء فريق الدعم، وسيتم التواصل معك في أقرب وقت."
-    : "I’ll pass this to a support team member so they can help you as soon as possible.";
-}
+// handoffReplyFor removed — the AI agent now generates natural context-aware handoff messages
+
 
 const loadConversationStep = createStep({
   id: "load-conversation",
@@ -334,6 +331,8 @@ const routeHandoffStep = createStep({
   execute: async ({ inputData }) => {
     if (inputData.action) return inputData;
 
+    // If customer explicitly asks for a human, flag it but let the agent respond naturally.
+    // The agent instructions tell it how to handle this warmly — not a hardcoded reply.
     if (hasExplicitHumanRequest(inputData.message)) {
       const ticket: AiReplyTicketContext = {
         shouldCreate: true,
@@ -341,15 +340,8 @@ const routeHandoffStep = createStep({
         priority: "medium",
         reason: "explicit_human_request",
       };
-
-      return {
-        ...inputData,
-        action: "handoff" as const,
-        reply: handoffReplyFor(inputData.message),
-        confidence: null,
-        reason: "explicit_human_request",
-        ticket,
-      };
+      // Pass to agent with handoff flag — agent will generate a natural, warm handoff message
+      return { ...inputData, ticket, reason: "explicit_human_request" };
     }
 
     const ticketIntent = classifyTicketIntent(inputData.message);
@@ -360,18 +352,8 @@ const routeHandoffStep = createStep({
         priority: ticketIntent.priority as AiReplyTicketContext["priority"],
         reason: ticketIntent.reason,
       };
-
-      return {
-        ...inputData,
-        action: "handoff" as const,
-        reply:
-          ticketIntent.category === "complaint"
-            ? "تم تسجيل شكواك وتحويلها لفريق الدعم لمتابعتها في أقرب وقت."
-            : handoffReplyFor(inputData.message),
-        confidence: null,
-        reason: ticketIntent.reason,
-        ticket,
-      };
+      // Pass to agent with ticket metadata — agent generates the reply naturally
+      return { ...inputData, ticket, reason: ticketIntent.reason };
     }
 
     return inputData;
@@ -422,29 +404,6 @@ const knowledgeStep = createStep({
         })
       : "";
 
-    if (
-      knowledge &&
-      knowledge.confidence < (inputData.bot?.confidenceReviewThreshold ?? 40)
-    ) {
-      const ticket: AiReplyTicketContext = {
-        shouldCreate: true,
-        category: "ai_failed",
-        priority: "medium",
-        reason: "low_knowledge_confidence",
-      };
-
-      return {
-        ...inputData,
-        knowledge,
-        knowledgePrompt,
-        confidence: knowledge.confidence,
-        action: "handoff" as const,
-        reply: handoffReplyFor(inputData.message),
-        reason: "low_knowledge_confidence",
-        ticket,
-      };
-    }
-
     return {
       ...inputData,
       knowledge,
@@ -467,12 +426,19 @@ const generateReplyStep = createStep({
       inputData.setting?.systemPrompt || DEFAULT_SYSTEM_PROMPT,
       inputData.knowledgePrompt
         ? [
-            "قاعدة المعرفة هي مصدر الحقيقة الأول. استخدمها قبل أي معرفة عامة.",
-            "إذا كانت الثقة منخفضة، اسأل سؤالاً توضيحياً واحداً أو اطلب تحويل الطلب لفريق الدعم.",
-            "لا تذكر أسماء المصادر أو tool أو workflow أو documentId أو tenantId أو botId للعميل.",
+            // === KNOWLEDGE CONTEXT ===
+            "The following is retrieved knowledge from this business's knowledge base. Use it as your primary source of truth.",
+            "Do NOT mention source names, document IDs, or tool names to the customer.",
+            "If knowledge confidence is low, ask ONE natural clarifying question before considering handoff.",
             inputData.knowledgePrompt,
           ].join("\n")
-        : "إذا لم تتوفر معرفة كافية، لا تخترع معلومات؛ اطلب توضيحاً قصيراً أو اقترح التحويل للدعم.",
+        : [
+            // === NO KNOWLEDGE AVAILABLE ===
+            "No specific knowledge was found for this query.",
+            "Do not invent product details, prices, or policies.",
+            "Try to help with general reasoning if applicable, or ask one focused clarifying question.",
+            "If after one attempt you still cannot help: gracefully let the customer know someone from the team will follow up. Write this naturally and differently each time based on context.",
+          ].join("\n"),
     ]
       .filter(Boolean)
       .join("\n\n");
@@ -481,9 +447,16 @@ const generateReplyStep = createStep({
     const attachmentDescription = describeAttachmentsForAi(
       getInputAttachments(inputData.metadata)
     );
+    // Inform the agent about special context if this is a handoff-flagged request
+    const handoffContextNote = inputData.reason === "explicit_human_request"
+      ? "\n\n[INTERNAL NOTE — not visible to customer]: The customer has explicitly asked to speak with a human. Acknowledge their request warmly, confirm you are connecting them with the team, and reassure them someone will be in touch soon. Phrase it naturally based on their language and tone."
+      : inputData.ticket?.shouldCreate && inputData.ticket.category !== "ai_failed"
+      ? `\n\n[INTERNAL NOTE — not visible to customer]: A support ticket will be created for this (${inputData.ticket.reason}). Respond helpfully but also let them know naturally that the team will follow up if needed.`
+      : "";
+
     const userPrompt = attachmentDescription
-      ? `${inputData.message}\n\nمرفقات العميل: ${attachmentDescription}\nإذا كان حل الطلب يتطلب قراءة محتوى الملف نفسه ولا يوجد نص كاف، اطلب توضيحاً أو حوّل الطلب لفريق الدعم.`
-      : inputData.message;
+      ? `${inputData.message}\n\nمرفقات العميل: ${attachmentDescription}${handoffContextNote}`
+      : `${inputData.message}${handoffContextNote}`;
 
     try {
       const resolvedModel = await resolveMastraModelForBot({
@@ -515,9 +488,16 @@ const generateReplyStep = createStep({
         },
       });
 
+      // If the reason indicates a handoff scenario, mark action accordingly
+      const isHandoffReason = [
+        "explicit_human_request",
+        "complaint",
+        "technical_support",
+      ].includes(inputData.reason || "") && inputData.ticket?.shouldCreate;
+
       return {
         ...inputData,
-        action: "reply" as const,
+        action: isHandoffReason ? ("handoff" as const) : ("reply" as const),
         reply: result.text?.trim() || "",
         responseId: (result as { runId?: string }).runId || "",
         providerUsed: resolvedModel.providerUsed,

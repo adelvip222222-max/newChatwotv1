@@ -124,10 +124,8 @@ export function Sidebar({ role }: { role?: string }) {
 
   return (
     <>
-      <div className={`hidden shrink-0 transition-all lg:block ${collapsed ? "w-20" : "w-64"}`} />
-
       <aside
-        className={`fixed inset-y-0 rtl:right-0 ltr:left-0 z-40 hidden border-slate-800 bg-[#0B0C1E] text-white transition-all lg:flex lg:flex-col ${
+        className={`hidden shrink-0 lg:flex lg:flex-col relative z-0 bg-transparent text-white transition-all duration-300 ${
           collapsed ? "w-20" : "w-64"
         }`}
       >

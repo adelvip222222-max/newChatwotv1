@@ -26,6 +26,34 @@ export const aiWorker = new Worker(
     ]);
 
     if (!conversation || !message) throw new Error("Conversation or message not found");
+
+    // إعادة تنشيط AI تلقائياً إذا كانت المحادثة محوَّلة بسبب low_knowledge_confidence
+    // (الحالات التي يجب أن يستمر فيها الـ AI بالرد)
+    const autoReactivateReasons = ["low_knowledge_confidence", "repeated_question_loop", "max_ai_turns_reached"];
+    if (
+      (conversation.mode === "human" || conversation.aiPaused) &&
+      conversation.status !== "closed" &&
+      autoReactivateReasons.includes(conversation.handoffReason || "")
+    ) {
+      conversation.mode = "ai";
+      conversation.aiPaused = false;
+      conversation.aiPausedReason = null;
+      conversation.aiStatus = "active";
+      conversation.aiTurnCount = 0;
+      conversation.metadata = {
+        ...(conversation.metadata || {}),
+        aiPolicy: {
+          ...(conversation.metadata?.aiPolicy || {}),
+          clarificationCount: 0,
+          repeatedUserCount: 0,
+          handoffRequested: false,
+          reactivatedAt: new Date().toISOString(),
+        }
+      };
+      await conversation.save();
+      logger.info("ai.auto_reactivated", { tenantId, conversationId, previousReason: conversation.handoffReason, traceId });
+    }
+
     if (conversation.mode === "human" || conversation.aiPaused || conversation.status === "closed") {
       return { generated: false, reason: "ai_paused" };
     }

@@ -1,5 +1,3 @@
-import "server-only";
-
 import { Mastra } from "@mastra/core/mastra";
 import { LibSQLStore } from "@mastra/libsql";
 import { MongoDBStore } from "@mastra/mongodb";
