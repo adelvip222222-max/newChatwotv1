@@ -1,6 +1,6 @@
 import { Worker } from "bullmq";
 import { connectToDatabase } from "../src/lib/mongodb";
-import { Channel, Conversation, Message } from "../src/lib/models";
+import { Channel, ChannelIdentity, Conversation, Message } from "../src/lib/models";
 import { createRedisConnection } from "../src/lib/redis-connection";
 import { recordFailedJob } from "../src/lib/job-monitoring";
 import { startWorkerHeartbeat } from "../src/lib/worker-heartbeat";
@@ -32,14 +32,23 @@ export const egressWorker = new Worker(
       return { queued: false, reason: "internal_channel" };
     }
 
-    const channel = await Channel.findOne({
+    const channel = await resolveOutboundChannel({
       tenantId,
-      botId: conversation.botId,
-      type: channelProvider,
-      isActive: true
+      channelProvider,
+      conversation,
     });
 
-    if (!channel) throw new Error("Outbound channel not found");
+    if (!channel) {
+      logger.error("egress.channel_not_found", {
+        tenantId,
+        conversationId,
+        messageId,
+        provider: channelProvider,
+        channelIdentityId: conversation.channelIdentityId?.toString?.() || "",
+        botId: conversation.botId?.toString?.() || "",
+      });
+      throw new Error("Outbound channel not found");
+    }
 
     const result = await queueOutboundMessage({
       tenantId,
@@ -62,3 +71,46 @@ export const egressWorker = new Worker(
 egressWorker.on("failed", (job, error) => {
   void recordFailedJob("egress-queue", job, error);
 });
+
+
+async function resolveOutboundChannel(input: {
+  tenantId: string;
+  channelProvider: string;
+  conversation: any;
+}) {
+  const { tenantId, channelProvider, conversation } = input;
+
+  if (conversation.channelIdentityId) {
+    const identity = await ChannelIdentity.findOne({
+      _id: conversation.channelIdentityId,
+      tenantId,
+      provider: channelProvider,
+    }).select("channelId").lean();
+
+    if (identity?.channelId) {
+      const exactChannel = await Channel.findOne({
+        _id: identity.channelId,
+        tenantId,
+        type: channelProvider,
+        isActive: true,
+      });
+      if (exactChannel) return exactChannel;
+    }
+  }
+
+  if (conversation.botId) {
+    const botChannel = await Channel.findOne({
+      tenantId,
+      botId: conversation.botId,
+      type: channelProvider,
+      isActive: true,
+    });
+    if (botChannel) return botChannel;
+  }
+
+  return Channel.findOne({
+    tenantId,
+    type: channelProvider,
+    isActive: true,
+  }).sort({ updatedAt: -1 });
+}

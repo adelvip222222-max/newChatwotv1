@@ -16,7 +16,8 @@
     "workers:all": "npm run worker:ingress & npm run worker:core-routing & npm run worker:ai & npm run worker:egress & npm run worker:outbound & npm run worker:knowledge",
     "lint": "next lint",
     "test": "jest",
-    "queue:requeue-outbound": "ts-node -r tsconfig-paths/register --compiler-options \"{\\\"module\\\":\\\"commonjs\\\",\\\"moduleResolution\\\":\\\"node\\\"}\" scripts/requeue-outbound.ts"
+    "queue:requeue-outbound": "ts-node -r tsconfig-paths/register --compiler-options \"{\\\"module\\\":\\\"commonjs\\\",\\\"moduleResolution\\\":\\\"node\\\"}\" scripts/requeue-outbound.ts",
+    "knowledge:requeue": "ts-node -r tsconfig-paths/register --compiler-options \"{\\\"module\\\":\\\"commonjs\\\",\\\"moduleResolution\\\":\\\"node\\\"}\" scripts/requeue-knowledge.ts"
   },
   "dependencies": {
     "@auth/mongodb-adapter": "^3.10.0",

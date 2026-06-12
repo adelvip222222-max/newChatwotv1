@@ -38,7 +38,8 @@ const workerEnv = {
   INGRESS_WORKER_CONCURRENCY: '4',
   CORE_ROUTING_WORKER_CONCURRENCY: '3',
   AI_WORKER_CONCURRENCY: '1',
-  EGRESS_WORKER_CONCURRENCY: '3'
+  EGRESS_WORKER_CONCURRENCY: '3',
+  KNOWLEDGE_WORKER_CONCURRENCY: '2'
 };
 
 module.exports = {
@@ -111,6 +112,18 @@ module.exports = {
       max_memory_restart: '1200M',
       out_file: './logs/worker-outbound.out.log',
       error_file: './logs/worker-outbound.err.log',
+      env: workerEnv
+    },
+
+    {
+      name: 'worker-knowledge',
+      script: 'node_modules/ts-node/dist/bin.js',
+      args: '--transpile-only -r tsconfig-paths/register --compiler-options {"module":"commonjs","moduleResolution":"node"} workers/knowledge-worker.ts',
+      instances: 1,
+      exec_mode: 'fork',
+      max_memory_restart: '1200M',
+      out_file: './logs/worker-knowledge.out.log',
+      error_file: './logs/worker-knowledge.err.log',
       env: workerEnv
     }
   ]
