@@ -6,8 +6,9 @@ import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { UserPlus, Upload, FileSpreadsheet, Download, CheckCircle2, Loader2, ArrowLeft, Store, Stethoscope, Building2, TerminalSquare, Lightbulb, Globe, AlignLeft, Briefcase, Mic, X, MessageCircle, Users } from "lucide-react";
 import { useI18n } from "@/components/i18n-provider";
+import { getDefaultIndustryKnowledgeDocuments, getDefaultIndustryLabel, type DefaultIndustryId } from "@/lib/knowledge-default-templates";
 
-type Industry = "ecommerce" | "medical" | "realestate" | "tech" | "other" | null;
+type Industry = DefaultIndustryId | null;
 
 const INDUSTRIES: { id: Industry; icon: React.ReactNode; template?: string }[] = [
   { id: "ecommerce", icon: <Store size={24} />, template: "ecommerce-template.xlsx" },
@@ -34,6 +35,7 @@ export function RegisterForm() {
   const [websiteUrl, setWebsiteUrl] = useState("");
   const [companyProfile, setCompanyProfile] = useState("");
   const [servicesDesc, setServicesDesc] = useState("");
+  const [defaultKnowledgeSeeded, setDefaultKnowledgeSeeded] = useState(false);
   
   // Step 3 State
   const [phoneNumber, setPhoneNumber] = useState("");
@@ -105,10 +107,13 @@ export function RegisterForm() {
     }
   }
 
-  async function onUploadKnowledge() {
+  async function onUploadKnowledge(options?: { seedOnly?: boolean }) {
     if (!botId) return;
     setLoading(true);
     setError("");
+
+    const selectedIndustry = industry || "other";
+    const selectedIndustryLabel = getDefaultIndustryLabel(selectedIndustry, locale === "ar" ? "ar" : "en");
 
     const postData = async (formData: FormData) => {
       formData.append("botId", botId);
@@ -117,41 +122,80 @@ export function RegisterForm() {
       if (!res.ok) throw new Error((await res.json()).error || t.auth.linkError);
     };
 
+    const postTextKnowledge = async (payload: {
+      title: string;
+      sourceType: "custom_text";
+      categoryName: string;
+      text: string;
+      tags?: string[];
+    }) => {
+      const fd = new FormData();
+      fd.append("title", payload.title);
+      fd.append("sourceType", payload.sourceType);
+      fd.append("categoryName", payload.categoryName);
+      fd.append("text", payload.text);
+      fd.append("tags", ["onboarding", selectedIndustry, ...(payload.tags || [])].join(","));
+      await postData(fd);
+    };
+
     try {
-      if (file) {
-        const fd = new FormData();
-        fd.append("title", `بيانات مجمعة (${file.name})`);
-        fd.append("sourceType", "excel");
-        fd.append("categoryName", "البيانات الأساسية");
-        fd.append("file", file);
-        await postData(fd);
+      // Always seed a safe baseline knowledge package for the selected template.
+      // This gives the bot an immediate business scope and roughly half-ready KB
+      // before the owner adds detailed products, prices, policies, or FAQs.
+      if (!defaultKnowledgeSeeded) {
+        const defaultDocs = getDefaultIndustryKnowledgeDocuments(selectedIndustry);
+        for (const doc of defaultDocs) {
+          await postTextKnowledge({
+            title: `${doc.title} — ${selectedIndustryLabel}`,
+            sourceType: doc.sourceType,
+            categoryName: doc.categoryName,
+            text: doc.text,
+            tags: doc.tags,
+          });
+        }
+        setDefaultKnowledgeSeeded(true);
       }
 
-      if (websiteUrl.trim()) {
-        const fd = new FormData();
-        fd.append("title", "الموقع الإلكتروني الرسمي");
-        fd.append("sourceType", "website");
-        fd.append("categoryName", "الروابط");
-        fd.append("sourceUrl", websiteUrl.trim());
-        await postData(fd);
-      }
+      if (!options?.seedOnly) {
+        if (file) {
+          const fd = new FormData();
+          fd.append("title", `بيانات مجمعة (${file.name})`);
+          fd.append("sourceType", "excel");
+          fd.append("categoryName", "البيانات الأساسية");
+          fd.append("tags", ["onboarding", selectedIndustry, "uploaded-template"].join(","));
+          fd.append("file", file);
+          await postData(fd);
+        }
 
-      if (companyProfile.trim()) {
-        const fd = new FormData();
-        fd.append("title", "نبذة عن النشاط التجاري");
-        fd.append("sourceType", "custom_text");
-        fd.append("categoryName", "معلومات الشركة");
-        fd.append("text", companyProfile.trim());
-        await postData(fd);
-      }
+        if (websiteUrl.trim()) {
+          const fd = new FormData();
+          fd.append("title", "الموقع الإلكتروني الرسمي");
+          fd.append("sourceType", "website");
+          fd.append("categoryName", "الروابط");
+          fd.append("tags", ["onboarding", selectedIndustry, "website"].join(","));
+          fd.append("sourceUrl", websiteUrl.trim());
+          await postData(fd);
+        }
 
-      if (servicesDesc.trim()) {
-        const fd = new FormData();
-        fd.append("title", "الخدمات والسياسات");
-        fd.append("sourceType", "custom_text");
-        fd.append("categoryName", "الخدمات");
-        fd.append("text", servicesDesc.trim());
-        await postData(fd);
+        if (companyProfile.trim()) {
+          await postTextKnowledge({
+            title: "نبذة عن النشاط التجاري",
+            sourceType: "custom_text",
+            categoryName: "معلومات الشركة",
+            text: companyProfile.trim(),
+            tags: ["company-profile"],
+          });
+        }
+
+        if (servicesDesc.trim()) {
+          await postTextKnowledge({
+            title: "الخدمات والسياسات",
+            sourceType: "custom_text",
+            categoryName: "الخدمات",
+            text: servicesDesc.trim(),
+            tags: ["services", "policies"],
+          });
+        }
       }
 
       setStep(3);
@@ -163,7 +207,7 @@ export function RegisterForm() {
   }
 
   function handleSkipKnowledge() {
-    setStep(3);
+    void onUploadKnowledge({ seedOnly: true });
   }
 
   function handleActivationContinue() {
@@ -336,6 +380,11 @@ export function RegisterForm() {
           <p className="mt-2 text-sm text-accent leading-relaxed">
             {t.auth.step2Subtitle}
           </p>
+          <p className="mt-3 rounded-xl bg-emerald-50 px-4 py-2 text-xs font-semibold leading-relaxed text-emerald-700">
+            {locale === "ar"
+              ? "عند اختيار القالب سنضيف تلقائيًا معرفة عامة آمنة تغطي قرابة نصف احتياجات البوت كبداية، ثم يمكنك إكمالها بملفك أو موقعك أو وصف نشاطك."
+              : "When you choose a template, we automatically seed a safe baseline knowledge package that covers about half of the bot setup, then you can enrich it with your file, website, or business description."}
+          </p>
         </div>
 
         {error ? <p className="mb-4 rounded-md bg-red-50 p-3 text-sm text-red-700 border border-red-100">{error}</p> : null}
@@ -480,7 +529,11 @@ export function RegisterForm() {
             disabled={loading}
             className="flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition"
           >
-            {t.auth.skipButton}
+            {loading
+              ? t.auth.processing
+              : locale === "ar"
+                ? "استخدام البيانات الافتراضية والمتابعة"
+                : "Use default knowledge and continue"}
             <ArrowLeft size={16} className="rtl:rotate-0 rotate-180" />
           </button>
         </div>

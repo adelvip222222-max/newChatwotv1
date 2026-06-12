@@ -17,6 +17,14 @@ import { decryptSecret } from "@/lib/crypto";
 import { knowledgeTrainingQueue, defaultJobOptions, makeQueueJobId } from "@/lib/queues";
 import { logger } from "@/lib/logger";
 import { routeAiRequest } from "@/lib/ai-router";
+import {
+  deleteChunksByDocument,
+  isQdrantEnabled,
+  isVectorUsableForQdrant,
+  semanticSearch,
+  upsertChunkBatch,
+  type QdrantChunkPayload
+} from "@/lib/qdrant";
 
 export const knowledgeSourceTypes = [
   "pdf",
@@ -68,6 +76,8 @@ type KnowledgeSearchResult = {
   sourceUrl: string;
   tags: string[];
   documentId: string;
+  chunkId?: string;
+  retrievalEngine?: "qdrant" | "mongo" | "document-fallback";
 };
 
 const LOCAL_HASH_DIMENSIONS = 128;
@@ -273,7 +283,10 @@ export async function trainKnowledgeDocument(documentId: string, tenantId: strin
   await document.save();
 
   try {
+    // Keep MongoDB and Qdrant in sync. Qdrant errors should not block MongoDB fallback.
+    await safeDeleteQdrantDocument(document._id.toString(), tenantId);
     await KnowledgeChunk.deleteMany({ tenantId, documentId: document._id });
+
     const chunks = splitIntoChunks(document.rawText || "");
     const records = [];
 
@@ -313,7 +326,8 @@ export async function trainKnowledgeDocument(documentId: string, tenantId: strin
       });
     }
 
-    if (records.length) await KnowledgeChunk.insertMany(records);
+    const insertedChunks = records.length ? await KnowledgeChunk.insertMany(records) : [];
+    await safeUpsertChunksToQdrant(insertedChunks as any[]);
 
     document.status = "ready";
     document.statusReason = "";
@@ -321,6 +335,12 @@ export async function trainKnowledgeDocument(documentId: string, tenantId: strin
     document.embeddingCount = records.filter((item) => item.embedding.length > 0).length;
     document.lastTrainedAt = new Date();
     document.needsRetraining = false;
+    document.metadata = {
+      ...(document.metadata || {}),
+      qdrantEnabled: isQdrantEnabled(),
+      qdrantIndexedCount: insertedChunks.filter((item: any) => isVectorUsableForQdrant(item.embedding || [], item.embeddingProvider)).length,
+      qdrantLastIndexedAt: isQdrantEnabled() ? new Date().toISOString() : undefined
+    };
     await document.save();
   } catch (error) {
     const reason = error instanceof Error ? error.message : "فشل تدريب مصدر المعرفة.";
@@ -332,7 +352,6 @@ export async function trainKnowledgeDocument(documentId: string, tenantId: strin
     throw error;
   }
 }
-
 export async function retrainAllKnowledge(tenantId: string, botId?: string) {
   await connectToDatabase();
   const filter: Record<string, unknown> = { tenantId, status: { $ne: "duplicate" } };
@@ -415,8 +434,11 @@ export async function updateKnowledgeDocument(input: {
     document.status = "pending";
     document.statusReason = "تم تعديل المحتوى ويحتاج إعادة تدريب.";
     document.needsRetraining = true;
+    await KnowledgeChunk.deleteMany({ tenantId: input.tenantId, documentId: document._id });
+    await safeDeleteQdrantDocument(document._id.toString(), input.tenantId);
   }
   await document.save();
+  if (document.needsRetraining) await enqueueKnowledgeTraining(document._id.toString(), input.tenantId, "knowledge-update");
   return { success: true, id: document._id.toString(), needsRetraining: document.needsRetraining };
 }
 
@@ -426,6 +448,7 @@ export async function deleteKnowledgeDocument(documentId: string, tenantId: stri
   const document = await KnowledgeDocument.findOne({ _id: documentId, tenantId }).select("_id");
   if (!document) throw new Error("مصدر المعرفة غير موجود.");
   await Promise.all([
+    safeDeleteQdrantDocument(document._id.toString(), tenantId),
     KnowledgeChunk.deleteMany({ tenantId, documentId: document._id }),
     KnowledgeDocument.deleteOne({ _id: document._id, tenantId })
   ]);
@@ -464,8 +487,11 @@ export async function rewriteKnowledgeDocumentWithAi(documentId: string, tenantI
     rewrittenProvider: result.providerUsed,
     rewrittenModel: result.modelUsed
   };
+  await KnowledgeChunk.deleteMany({ tenantId, documentId: document._id });
+  await safeDeleteQdrantDocument(document._id.toString(), tenantId);
   await document.save();
-  return { success: true, id: document._id.toString(), rawText: rewritten };
+  await enqueueKnowledgeTraining(document._id.toString(), tenantId, "knowledge-rewrite");
+  return { success: true, id: document._id.toString(), rawText: rewritten, needsRetraining: true };
 }
 
 export async function searchKnowledge(input: {
@@ -481,17 +507,34 @@ export async function searchKnowledge(input: {
   const apiKey = aiModel ? decryptSecret(aiModel.apiKeyEncrypted) : "";
   const { embedding: queryEmbedding, provider: queryProvider } = await createEmbedding(question, apiKey);
   const queryKeywords = extractKeywords(question);
-
+  const limit = input.limit || 10;
   const notExpired = { $or: [{ expiresAt: { $exists: false } }, { expiresAt: null }, { expiresAt: { $gt: new Date() } }] };
 
-  const semanticCandidates = await KnowledgeChunk.find({
+  const qdrantResults = await safeQdrantSearch({
     tenantId: input.tenantId,
     botId: input.botId,
-    ...notExpired
-  })
-    .sort({ updatedAt: -1 })
-    .limit(Number(process.env.KNOWLEDGE_CANDIDATE_LIMIT || 600))
-    .lean();
+    question,
+    queryEmbedding,
+    queryProvider,
+    queryKeywords,
+    limit: Number(process.env.KNOWLEDGE_QDRANT_LIMIT || Math.max(limit * 2, 12))
+  });
+
+  const shouldUseMongoSemanticFallback =
+    !qdrantResults.length ||
+    qdrantResults.length < Number(process.env.KNOWLEDGE_MIN_QDRANT_RESULTS || 4) ||
+    process.env.KNOWLEDGE_ALWAYS_INCLUDE_MONGO_FALLBACK === "true";
+
+  const semanticCandidates = shouldUseMongoSemanticFallback
+    ? await KnowledgeChunk.find({
+        tenantId: input.tenantId,
+        botId: input.botId,
+        ...notExpired
+      })
+        .sort({ updatedAt: -1 })
+        .limit(Number(process.env.KNOWLEDGE_CANDIDATE_LIMIT || 600))
+        .lean()
+    : [];
 
   const keywordCandidates = queryKeywords.length
     ? await KnowledgeChunk.find(
@@ -504,7 +547,7 @@ export async function searchKnowledge(input: {
         { score: { $meta: "textScore" } }
       )
         .sort({ score: { $meta: "textScore" } })
-        .limit(80)
+        .limit(Number(process.env.KNOWLEDGE_KEYWORD_LIMIT || 80))
         .lean()
         .catch(() => [])
     : [];
@@ -512,32 +555,72 @@ export async function searchKnowledge(input: {
   const candidates = new Map<string, (typeof semanticCandidates)[number]>();
   for (const item of [...semanticCandidates, ...keywordCandidates]) candidates.set(item._id.toString(), item);
 
-  const scored = [...candidates.values()]
-    .map((item) => {
-      const itemEmbedding = Array.isArray(item.embedding) ? item.embedding : [];
-      const comparableQueryEmbedding = itemEmbedding.length === queryEmbedding.length
-        ? queryEmbedding
-        : localHashEmbedding(question);
-      const comparableItemEmbedding = itemEmbedding.length === comparableQueryEmbedding.length
-        ? itemEmbedding
-        : localHashEmbedding(item.text || "");
-      const semanticScore = cosineSimilarity(comparableQueryEmbedding, comparableItemEmbedding);
-      const keywordScore = keywordOverlap(queryKeywords, item.keywords || [], item.normalizedText || "");
-      const score = Math.round((semanticScore * 0.45 + keywordScore * 0.55) * 100);
-      return {
-        text: item.text,
-        score,
-        semanticScore: Math.round(semanticScore * 100),
-        keywordScore: Math.round(keywordScore * 100),
-        sourceTitle: item.sourceTitle || "Knowledge Base",
-        sourceUrl: item.sourceUrl || "",
-        tags: Array.isArray(item.metadata?.tags) ? item.metadata.tags : [],
-        documentId: item.documentId.toString()
-      };
-    })
+  const mongoResults: KnowledgeSearchResult[] = [...candidates.values()].map((item) => {
+    const itemEmbedding = Array.isArray(item.embedding) ? item.embedding : [];
+    const comparableQueryEmbedding = itemEmbedding.length === queryEmbedding.length
+      ? queryEmbedding
+      : localHashEmbedding(question);
+    const comparableItemEmbedding = itemEmbedding.length === comparableQueryEmbedding.length
+      ? itemEmbedding
+      : localHashEmbedding(item.text || "");
+    const semanticScore = cosineSimilarity(comparableQueryEmbedding, comparableItemEmbedding);
+    const keywordScore = keywordOverlap(queryKeywords, item.keywords || [], item.normalizedText || "");
+    const score = Math.round((semanticScore * 0.45 + keywordScore * 0.55) * 100);
+    return {
+      text: item.text,
+      score,
+      semanticScore: Math.round(semanticScore * 100),
+      keywordScore: Math.round(keywordScore * 100),
+      sourceTitle: item.sourceTitle || "Knowledge Base",
+      sourceUrl: item.sourceUrl || "",
+      tags: Array.isArray(item.metadata?.tags) ? item.metadata.tags : [],
+      documentId: item.documentId.toString(),
+      chunkId: item._id.toString(),
+      retrievalEngine: "mongo"
+    };
+  });
+
+  // Smart fallback: newly seeded onboarding documents may still be pending in the
+  // training queue. Search raw KnowledgeDocument text as a temporary fallback so
+  // the bot can stay within the business scope immediately after registration.
+  const combinedBeforeFallback = [...qdrantResults, ...mongoResults];
+  const rawDocumentFallback = combinedBeforeFallback.length < Number(process.env.KNOWLEDGE_MIN_CHUNK_RESULTS || 6)
+    ? await KnowledgeDocument.find({
+        tenantId: input.tenantId,
+        botId: input.botId,
+        ...notExpired,
+        status: { $nin: ["error", "duplicate"] },
+        rawText: { $exists: true, $ne: "" }
+      })
+        .sort({ updatedAt: -1 })
+        .limit(Number(process.env.KNOWLEDGE_DOCUMENT_FALLBACK_LIMIT || 40))
+        .lean()
+    : [];
+
+  const documentResults: KnowledgeSearchResult[] = rawDocumentFallback.map((document) => {
+    const text = cleanText(String(document.rawText || "")).slice(0, Number(process.env.KNOWLEDGE_DOCUMENT_FALLBACK_CHARS || 2400));
+    const documentKeywords = extractKeywords(text);
+    const semanticScore = cosineSimilarity(localHashEmbedding(question), localHashEmbedding(text));
+    const keywordScore = keywordOverlap(queryKeywords, documentKeywords, normalizeForSearch(text));
+    const score = Math.round((semanticScore * 0.35 + keywordScore * 0.65) * 100);
+    return {
+      text,
+      score,
+      semanticScore: Math.round(semanticScore * 100),
+      keywordScore: Math.round(keywordScore * 100),
+      sourceTitle: document.title || "Knowledge Base",
+      sourceUrl: document.sourceUrl || "",
+      tags: Array.isArray(document.tags) ? document.tags : [],
+      documentId: document._id.toString(),
+      retrievalEngine: "document-fallback"
+    };
+  });
+
+  const scored = dedupeKnowledgeResults([...qdrantResults, ...mongoResults, ...documentResults])
+    .filter((item) => item.text && item.text.trim().length > 0)
     .sort((a, b) => b.score - a.score);
 
-  const top10 = scored.slice(0, input.limit || 10);
+  const top10 = scored.slice(0, limit);
   const confidence = calculateConfidence(top10, queryKeywords);
 
   const needsRetrainingCount = await KnowledgeChunk.countDocuments({
@@ -546,16 +629,26 @@ export async function searchKnowledge(input: {
     embeddingProvider: { $ne: queryProvider }
   });
 
+  const retrievalEngine = qdrantResults.length
+    ? "qdrant-hybrid"
+    : mongoResults.length
+      ? "mongo-hybrid"
+      : "document-fallback";
+
   return {
     intent: inferIntent(question),
     keywords: queryKeywords,
     confidence,
     results: top10,
     embeddingProvider: queryProvider,
+    retrievalEngine,
+    qdrantEnabled: isQdrantEnabled(),
+    qdrantResultCount: qdrantResults.length,
+    mongoResultCount: mongoResults.length,
+    documentFallbackCount: documentResults.length,
     ...(needsRetrainingCount > 0 ? { needsRetraining: needsRetrainingCount } : {})
   };
 }
-
 export function buildKnowledgePrompt(input: {
   question: string;
   intent: string;
@@ -567,7 +660,9 @@ export function buildKnowledgePrompt(input: {
   if (!input.results.length) {
     return [
       "لم يتم العثور على مصادر كافية في قاعدة المعرفة.",
-      "اطرح سؤالًا توضيحيًا محددًا بدل قول لا أعرف.",
+      "لا تجب من معلومات عامة خارج نشاط العمل. لا تخترع منتجات أو أسعار أو سياسات.",
+      "اطرح سؤالًا توضيحيًا محددًا يربط طلب العميل بالمنتجات أو الخدمات أو الحجز أو المبيعات أو الدعم أو الفواتير.",
+      "إذا كان سؤال العميل جانبيًا أو خارج سياق النشاط، اعتذر بلطف وأعد توجيهه لما يمكن أن تساعده به داخل هذا النشاط.",
       `السؤال: ${input.question}`
     ].join("\n");
   }
@@ -580,9 +675,11 @@ export function buildKnowledgePrompt(input: {
   });
 
   return [
-    "قاعدة المعرفة هي مصدر الحقيقة الأول. اجعل 90% من الرد مبنيًا على هذه المقاطع عند توفرها.",
-    "لا تقل لا أعرف ولا تحول للدعم إذا كان هناك أي مقطع مفيد؛ استخرج أفضل إجابة مباشرة من المقاطع المتاحة.",
-    "إذا كانت الثقة أعلى من 50 أجب مباشرة. بين 15 و50 أجب بإجابة قصيرة مبنية على الموجود ثم اسأل سؤالًا توضيحيًا واحدًا. أقل من 15 اسأل سؤالًا توضيحيًا محددًا.",
+    "قاعدة المعرفة هي مصدر الحقيقة الأول والحدود الرسمية للنشاط. اجعل الرد مبنيًا عليها حتى لو كانت قليلة أو عامة.",
+    "استخدم أي مقطع مفيد كأساس للإجابة. لا تقل لا أعرف ولا تحول للدعم إذا كان هناك أي معلومة يمكن الاستفادة منها بأمان.",
+    "ممنوع اختراع منتجات أو أسعار أو توفر مخزون أو مواعيد أو سياسات أو وعود غير موجودة في المقاطع.",
+    "إذا كانت الثقة أعلى من 50 أجب مباشرة من المقاطع. بين 15 و50 أجب بإجابة قصيرة مبنية على الموجود ثم اسأل سؤالًا توضيحيًا واحدًا. أقل من 15 لا تجب من معلومات عامة، بل اسأل سؤالًا يربط العميل بنطاق النشاط.",
+    "إذا حاول العميل جرّك إلى موضوع جانبي خارج سياق النشاط، اعتذر بلطف وارجع إلى المنتجات أو الخدمات أو الحجز أو الدعم أو الفواتير.",
     "لا تحول المحادثة إلى موظف إلا إذا طلب المستخدم ذلك صراحة أو كانت عملية مالية/إدارية تحتاج صلاحية بشرية أو انتهت محاولات التوضيح.",
     `Intent: ${input.intent}`,
     `Keywords: ${input.keywords.join(", ") || "-"}`,
@@ -591,6 +688,135 @@ export function buildKnowledgePrompt(input: {
     sources.join("\n\n"),
     `سؤال المستخدم: ${input.question}`
   ].join("\n");
+}
+
+
+async function enqueueKnowledgeTraining(documentId: string, tenantId: string, prefix = "knowledge-train") {
+  const jobId = makeQueueJobId(prefix, documentId);
+  await knowledgeTrainingQueue.add(
+    "train-document",
+    { documentId, tenantId },
+    { ...defaultJobOptions, jobId }
+  );
+  logger.info("knowledge.training_enqueued", { documentId, tenantId, prefix });
+}
+
+async function safeDeleteQdrantDocument(documentId: string, tenantId: string) {
+  if (!isQdrantEnabled()) return;
+  try {
+    await deleteChunksByDocument(documentId, tenantId);
+  } catch (error) {
+    logger.warn("qdrant.document_delete_failed_fallback_to_mongo", {
+      documentId,
+      tenantId,
+      error: error instanceof Error ? error.message : "unknown"
+    });
+  }
+}
+
+async function safeUpsertChunksToQdrant(chunks: any[]) {
+  if (!isQdrantEnabled() || !chunks.length) return;
+  const points = chunks
+    .filter((chunk) => isVectorUsableForQdrant(chunk.embedding || [], chunk.embeddingProvider))
+    .map((chunk) => ({
+      mongoId: chunk._id.toString(),
+      vector: chunk.embedding as number[],
+      payload: buildQdrantPayload(chunk)
+    }));
+
+  if (!points.length) return;
+
+  try {
+    await upsertChunkBatch(points);
+    logger.info("qdrant.chunks_upserted", { count: points.length });
+  } catch (error) {
+    logger.warn("qdrant.upsert_failed_fallback_to_mongo", {
+      count: points.length,
+      error: error instanceof Error ? error.message : "unknown"
+    });
+  }
+}
+
+function buildQdrantPayload(chunk: any): QdrantChunkPayload {
+  return {
+    tenantId: chunk.tenantId?.toString() || "",
+    botId: chunk.botId?.toString() || "",
+    documentId: chunk.documentId?.toString() || "",
+    categoryId: chunk.categoryId?.toString() || "",
+    collectionId: chunk.collectionId?.toString() || "",
+    chunkIndex: Number(chunk.chunkIndex || 0),
+    text: chunk.text || "",
+    keywords: Array.isArray(chunk.keywords) ? chunk.keywords : [],
+    embeddingProvider: chunk.embeddingProvider || "openai",
+    isTemporary: Boolean(chunk.isTemporary),
+    expiresAt: chunk.expiresAt ? new Date(chunk.expiresAt).toISOString() : null,
+    sourceTitle: chunk.sourceTitle || "",
+    sourceUrl: chunk.sourceUrl || "",
+    contentHash: chunk.contentHash || "",
+    mongoId: chunk._id?.toString() || "",
+    sourceType: chunk.metadata?.sourceType || "",
+    tags: Array.isArray(chunk.metadata?.tags) ? chunk.metadata.tags : []
+  };
+}
+
+async function safeQdrantSearch(input: {
+  tenantId: string;
+  botId: string;
+  question: string;
+  queryEmbedding: number[];
+  queryProvider: string;
+  queryKeywords: string[];
+  limit: number;
+}): Promise<KnowledgeSearchResult[]> {
+  if (!isQdrantEnabled() || !isVectorUsableForQdrant(input.queryEmbedding, input.queryProvider)) return [];
+  try {
+    const results = await semanticSearch(
+      input.queryEmbedding,
+      {
+        tenantId: input.tenantId,
+        botId: input.botId,
+        embeddingProvider: process.env.KNOWLEDGE_QDRANT_STRICT_PROVIDER === "false" ? undefined : input.queryProvider
+      },
+      input.limit,
+      Number(process.env.KNOWLEDGE_QDRANT_SCORE_THRESHOLD || 0.35)
+    );
+
+    return results.map((result) => {
+      const payload = result.payload;
+      const keywordScore = keywordOverlap(input.queryKeywords, payload.keywords || [], normalizeForSearch(payload.text || ""));
+      const semanticScore = Math.max(0, Math.min(1, Number(result.score || 0)));
+      const score = Math.round((semanticScore * 0.72 + keywordScore * 0.28) * 100);
+      return {
+        text: payload.text || "",
+        score,
+        semanticScore: Math.round(semanticScore * 100),
+        keywordScore: Math.round(keywordScore * 100),
+        sourceTitle: payload.sourceTitle || "Knowledge Base",
+        sourceUrl: payload.sourceUrl || "",
+        tags: Array.isArray(payload.tags) ? payload.tags : [],
+        documentId: payload.documentId,
+        chunkId: payload.mongoId || result.mongoId,
+        retrievalEngine: "qdrant"
+      };
+    });
+  } catch (error) {
+    logger.warn("qdrant.search_failed_fallback_to_mongo", {
+      tenantId: input.tenantId,
+      botId: input.botId,
+      error: error instanceof Error ? error.message : "unknown"
+    });
+    return [];
+  }
+}
+
+function dedupeKnowledgeResults(results: KnowledgeSearchResult[]) {
+  const map = new Map<string, KnowledgeSearchResult>();
+  for (const result of results) {
+    const key = result.chunkId || `${result.documentId}:${hash(result.text).slice(0, 12)}`;
+    const existing = map.get(key);
+    if (!existing || result.score > existing.score) map.set(key, result);
+  }
+  return [...map.values()];
 }
 
 async function upsertCategory(tenantId: string, name: string) {

@@ -1,0 +1,29 @@
+# Qdrant RAG configuration
+# Keep MongoDB keyword/search fallback enabled. Qdrant becomes the primary semantic retriever when configured.
+
+# Required to enable Qdrant
+QDRANT_URL=http://127.0.0.1:6333
+
+# Optional if your Qdrant instance uses an API key
+QDRANT_API_KEY=
+
+# Optional collection name
+QDRANT_COLLECTION=knowledge_chunks
+
+# Explicitly select Qdrant RAG. If omitted, Qdrant is still enabled when QDRANT_URL exists.
+KNOWLEDGE_RAG_ENGINE=qdrant
+
+# OpenAI embeddings are required for high-quality Qdrant vectors.
+OPENAI_API_KEY=
+OPENAI_EMBEDDING_MODEL=text-embedding-3-small
+OPENAI_EMBEDDING_DIMENSIONS=1536
+
+# Tuning knobs
+KNOWLEDGE_QDRANT_LIMIT=20
+KNOWLEDGE_QDRANT_SCORE_THRESHOLD=0.35
+KNOWLEDGE_MIN_QDRANT_RESULTS=4
+KNOWLEDGE_ALWAYS_INCLUDE_MONGO_FALLBACK=false
+KNOWLEDGE_KEYWORD_LIMIT=80
+KNOWLEDGE_CANDIDATE_LIMIT=600
+KNOWLEDGE_DOCUMENT_FALLBACK_LIMIT=40
+KNOWLEDGE_DOCUMENT_FALLBACK_CHARS=2400

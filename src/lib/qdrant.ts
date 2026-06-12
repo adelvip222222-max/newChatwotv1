@@ -1,7 +1,11 @@
 import { QdrantClient } from "@qdrant/js-client-rest";
 import { logger } from "@/lib/logger";
 
-const COLLECTION_NAME = "knowledge_chunks";
+const DEFAULT_COLLECTION_NAME = "knowledge_chunks";
+
+function getCollectionName(): string {
+  return process.env.QDRANT_COLLECTION || DEFAULT_COLLECTION_NAME;
+}
 
 let _client: QdrantClient | null = null;
 
@@ -16,20 +20,64 @@ function getClient(): QdrantClient {
 }
 
 export function isQdrantEnabled(): boolean {
-  return Boolean(process.env.QDRANT_URL);
+  return process.env.KNOWLEDGE_RAG_ENGINE === "qdrant" || Boolean(process.env.QDRANT_URL);
+}
+
+export function isVectorUsableForQdrant(vector: number[], provider?: string): boolean {
+  // Do not store local/hash fallback vectors in Qdrant. They are only for in-memory fallback.
+  return Array.isArray(vector) && vector.length >= 256 && provider !== "local-hash";
 }
 
 // ─── Collection Management ────────────────────────────────────────────────────
 
 export async function ensureCollection(vectorSize = 1536): Promise<void> {
+  if (!isQdrantEnabled()) return;
   const client = getClient();
+  const collection = getCollectionName();
   try {
-    await client.getCollection(COLLECTION_NAME);
+    const info = await client.getCollection(collection);
+    const existingSize = Number((info as any)?.config?.params?.vectors?.size || 0);
+    if (existingSize && existingSize !== vectorSize) {
+      logger.warn("qdrant.collection_vector_size_mismatch", {
+        collection,
+        existingSize,
+        requestedSize: vectorSize
+      });
+    }
   } catch {
-    await client.createCollection(COLLECTION_NAME, {
+    await client.createCollection(collection, {
       vectors: { size: vectorSize, distance: "Cosine" }
     });
-    logger.info("qdrant.collection_created", { collection: COLLECTION_NAME, vectorSize });
+    logger.info("qdrant.collection_created", { collection, vectorSize });
+  }
+}
+
+export async function getQdrantHealth(): Promise<{
+  enabled: boolean;
+  collection: string;
+  status: "disabled" | "ok" | "error";
+  pointsCount?: number;
+  vectorsCount?: number;
+  error?: string;
+}> {
+  const collection = getCollectionName();
+  if (!isQdrantEnabled()) return { enabled: false, collection, status: "disabled" };
+  try {
+    const info = await getClient().getCollection(collection);
+    return {
+      enabled: true,
+      collection,
+      status: "ok",
+      pointsCount: Number((info as any)?.points_count || 0),
+      vectorsCount: Number((info as any)?.vectors_count || 0)
+    };
+  } catch (error) {
+    return {
+      enabled: true,
+      collection,
+      status: "error",
+      error: error instanceof Error ? error.message : "unknown"
+    };
   }
 }
 
@@ -51,6 +99,8 @@ export interface QdrantChunkPayload {
   sourceUrl?: string;
   contentHash: string;
   mongoId: string;
+  sourceType?: string;
+  tags?: string[];
 }
 
 export async function upsertChunk(
@@ -58,28 +108,23 @@ export async function upsertChunk(
   vector: number[],
   payload: QdrantChunkPayload
 ): Promise<void> {
-  if (!isQdrantEnabled()) return;
-  const client = getClient();
-  await client.upsert(COLLECTION_NAME, {
-    wait: true,
-    points: [
-      {
-        id: mongoIdToUuid(mongoId),
-        vector,
-        payload: payload as unknown as Record<string, unknown>
-      }
-    ]
-  });
+  await upsertChunkBatch([{ mongoId, vector, payload }]);
 }
 
 export async function upsertChunkBatch(
   points: Array<{ mongoId: string; vector: number[]; payload: QdrantChunkPayload }>
 ): Promise<void> {
-  if (!isQdrantEnabled() || points.length === 0) return;
+  const usable = points.filter(({ vector, payload }) => isVectorUsableForQdrant(vector, payload.embeddingProvider));
+  if (!isQdrantEnabled() || usable.length === 0) return;
+
+  const vectorSize = usable[0]?.vector.length || 1536;
+  await ensureCollection(vectorSize);
+
   const client = getClient();
-  await client.upsert(COLLECTION_NAME, {
+  const collection = getCollectionName();
+  await client.upsert(collection, {
     wait: true,
-    points: points.map(({ mongoId, vector, payload }) => ({
+    points: usable.map(({ mongoId, vector, payload }) => ({
       id: mongoIdToUuid(mongoId),
       vector,
       payload: payload as unknown as Record<string, unknown>
@@ -92,7 +137,7 @@ export async function upsertChunkBatch(
 export async function deleteChunk(mongoId: string): Promise<void> {
   if (!isQdrantEnabled()) return;
   const client = getClient();
-  await client.delete(COLLECTION_NAME, {
+  await client.delete(getCollectionName(), {
     wait: true,
     points: [mongoIdToUuid(mongoId)]
   });
@@ -101,7 +146,7 @@ export async function deleteChunk(mongoId: string): Promise<void> {
 export async function deleteChunksByDocument(documentId: string, tenantId: string): Promise<void> {
   if (!isQdrantEnabled()) return;
   const client = getClient();
-  await client.delete(COLLECTION_NAME, {
+  await client.delete(getCollectionName(), {
     wait: true,
     filter: {
       must: [
@@ -116,13 +161,10 @@ export async function deleteExpiredChunks(): Promise<number> {
   if (!isQdrantEnabled()) return 0;
   const client = getClient();
   const now = new Date().toISOString();
-  const result = await client.delete(COLLECTION_NAME, {
+  const result = await client.delete(getCollectionName(), {
     wait: true,
     filter: {
-      must: [
-        { key: "isTemporary", match: { value: true } },
-        { key: "expiresAt", range: { lt: now } }
-      ]
+      must: [{ key: "isTemporary", match: { value: true } }, { key: "expiresAt", range: { lt: now } }]
     }
   });
   const deleted = (result as any)?.result?.deleted ?? 0;
@@ -152,14 +194,12 @@ export async function semanticSearch(
   vector: number[],
   filter: QdrantSearchFilter,
   limit = 10,
-  scoreThreshold = 0.4
+  scoreThreshold = 0.35
 ): Promise<QdrantSearchResult[]> {
-  if (!isQdrantEnabled()) return [];
+  if (!isQdrantEnabled() || !isVectorUsableForQdrant(vector, filter.embeddingProvider)) return [];
   const client = getClient();
 
-  const must: any[] = [
-    { key: "tenantId", match: { value: filter.tenantId } }
-  ];
+  const must: any[] = [{ key: "tenantId", match: { value: filter.tenantId } }];
 
   if (filter.botId) must.push({ key: "botId", match: { value: filter.botId } });
   if (filter.documentId) must.push({ key: "documentId", match: { value: filter.documentId } });
@@ -167,21 +207,7 @@ export async function semanticSearch(
   if (filter.collectionId) must.push({ key: "collectionId", match: { value: filter.collectionId } });
   if (filter.embeddingProvider) must.push({ key: "embeddingProvider", match: { value: filter.embeddingProvider } });
 
-  // Exclude expired temporary chunks
-  if (filter.excludeTemporaryExpired !== false) {
-    const now = new Date().toISOString();
-    // Must satisfy: NOT (isTemporary=true AND expiresAt < now)
-    // Equivalent: isTemporary=false OR expiresAt >= now OR expiresAt is null
-    must.push({
-      should: [
-        { key: "isTemporary", match: { value: false } },
-        { key: "expiresAt", range: { gte: now } },
-        { is_null: { key: "expiresAt" } }
-      ]
-    });
-  }
-
-  const results = await client.search(COLLECTION_NAME, {
+  const results = await client.search(getCollectionName(), {
     vector,
     limit,
     score_threshold: scoreThreshold,
@@ -189,21 +215,28 @@ export async function semanticSearch(
     with_payload: true
   });
 
-  return results.map((r) => ({
-    mongoId: uuidToMongoId(String(r.id)),
-    score: r.score,
-    payload: r.payload as unknown as QdrantChunkPayload
-  }));
+  const now = Date.now();
+  return results
+    .map((r) => ({
+      mongoId: uuidToMongoId(String(r.id)),
+      score: Number(r.score || 0),
+      payload: r.payload as unknown as QdrantChunkPayload
+    }))
+    .filter((result) => {
+      if (filter.excludeTemporaryExpired === false) return true;
+      if (!result.payload?.isTemporary) return true;
+      if (!result.payload?.expiresAt) return true;
+      return new Date(result.payload.expiresAt).getTime() > now;
+    });
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
- * Convert a 24-char MongoDB ObjectId hex string to a deterministic UUID v4-like string.
+ * Convert a 24-char MongoDB ObjectId hex string to a deterministic UUID-like string.
  * Qdrant requires UUIDs or unsigned integers as point IDs.
- * We pad the 24-char hex to 32 chars and format as UUID.
  */
-function mongoIdToUuid(mongoId: string): string {
+export function mongoIdToUuid(mongoId: string): string {
   const padded = mongoId.padEnd(32, "0").slice(0, 32);
   return [
     padded.slice(0, 8),
@@ -214,6 +247,6 @@ function mongoIdToUuid(mongoId: string): string {
   ].join("-");
 }
 
-function uuidToMongoId(uuid: string): string {
+export function uuidToMongoId(uuid: string): string {
   return uuid.replace(/-/g, "").slice(0, 24);
 }

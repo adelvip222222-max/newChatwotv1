@@ -19,7 +19,9 @@
     "test": "jest",
     "queue:requeue-outbound": "ts-node -r tsconfig-paths/register --compiler-options \"{\\\"module\\\":\\\"commonjs\\\",\\\"moduleResolution\\\":\\\"node\\\"}\" scripts/requeue-outbound.ts",
     "knowledge:requeue": "ts-node -r tsconfig-paths/register --compiler-options \"{\\\"module\\\":\\\"commonjs\\\",\\\"moduleResolution\\\":\\\"node\\\"}\" scripts/requeue-knowledge.ts",
-    "socket:server": "ts-node -r tsconfig-paths/register --compiler-options \"{\\\"module\\\":\\\"commonjs\\\",\\\"moduleResolution\\\":\\\"node\\\"}\" server/socket-server.ts"
+    "socket:server": "ts-node -r tsconfig-paths/register --compiler-options \"{\\\"module\\\":\\\"commonjs\\\",\\\"moduleResolution\\\":\\\"node\\\"}\" server/socket-server.ts",
+    "knowledge:qdrant:migrate": "ts-node -r tsconfig-paths/register --compiler-options \"{\\\"module\\\":\\\"commonjs\\\",\\\"moduleResolution\\\":\\\"node\\\"}\" scripts/migrate-chunks-to-qdrant.ts",
+    "knowledge:qdrant:health": "ts-node -r tsconfig-paths/register --compiler-options \"{\\\"module\\\":\\\"commonjs\\\",\\\"moduleResolution\\\":\\\"node\\\"}\" scripts/qdrant-health.ts"
   },
   "dependencies": {
     "@ai-sdk/react": "^3.0.204",

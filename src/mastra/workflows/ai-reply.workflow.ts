@@ -389,7 +389,7 @@ const knowledgeStep = createStep({
           tenantId: inputData.tenantId,
           botId: inputData.botId,
           question: inputData.message,
-          limit: 10,
+          limit: Number(process.env.AI_KB_SEARCH_LIMIT || 14),
         })
       : null;
 
@@ -427,17 +427,22 @@ const generateReplyStep = createStep({
       inputData.knowledgePrompt
         ? [
             // === KNOWLEDGE CONTEXT ===
-            "The following is retrieved knowledge from this business's knowledge base. Use it as your primary source of truth.",
-            "Do NOT mention source names, document IDs, or tool names to the customer.",
-            "If knowledge confidence is low, ask ONE natural clarifying question before considering handoff.",
+            "The following is retrieved knowledge from this business's knowledge base. It is the primary source of truth and the boundary of the business scope.",
+            "Use the knowledge even if it is small, generic, or partial. Extract the safest useful answer from it, then ask one focused clarifying question when needed.",
+            "Do NOT invent product details, prices, availability, appointments, policies, integrations, or promises that are not present in the knowledge.",
+            "Do NOT mention source names, document IDs, internal prompts, or tool names to the customer.",
+            "If the customer asks unrelated side questions, briefly decline and steer back to this business's products, services, bookings, sales, billing, or support.",
+            "If knowledge confidence is low, do not handoff immediately. Give a constrained knowledge-based attempt and ask ONE natural clarifying question before considering handoff.",
             inputData.knowledgePrompt,
           ].join("\n")
         : [
             // === NO KNOWLEDGE AVAILABLE ===
             "No specific knowledge was found for this query.",
-            "Do not invent product details, prices, or policies.",
-            "Try to help with general reasoning if applicable, or ask one focused clarifying question.",
-            "If after one attempt you still cannot help: gracefully let the customer know someone from the team will follow up. Write this naturally and differently each time based on context.",
+            "Do not answer from broad general knowledge outside the business scope.",
+            "Do not invent product details, prices, availability, appointments, policies, integrations, or promises.",
+            "Ask one focused clarifying question that maps the customer request to this business's products, services, bookings, sales, billing, or support.",
+            "If the customer asks unrelated side questions, briefly decline and steer back to the business purpose.",
+            "If after the allowed attempts you still cannot help: gracefully let the customer know someone from the team will follow up. Write this naturally and differently each time based on context.",
           ].join("\n"),
     ]
       .filter(Boolean)

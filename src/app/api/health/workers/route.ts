@@ -8,7 +8,8 @@ const workers = [
   "worker-core-routing",
   "worker-ai",
   "worker-egress",
-  "worker-outbound"
+  "worker-outbound",
+  "worker-knowledge"
 ];
 
 async function authorizeHealthCheck(request: Request) {
