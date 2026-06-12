@@ -10,12 +10,12 @@ export async function requireSuperAdmin() {
   if (!session?.user?.id) {
     throw new Error("Authentication is required.");
   }
-  if (session.user.isSuperAdmin === true) {
+  if (session.user.isSuperAdmin === true || session.user.role === "super-admin") {
     return session;
   }
   await connectToDatabase();
   const user = await User.findOne({ _id: session.user.id, isActive: true }).lean();
-  if (!(user as any)?.isSuperAdmin) {
+  if (!((user as any)?.isSuperAdmin === true || (user as any)?.role === "super-admin")) {
     throw new Error("Super-admin access is required.");
   }
   return session;

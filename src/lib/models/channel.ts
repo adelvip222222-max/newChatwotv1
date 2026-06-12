@@ -1,4 +1,4 @@
-import { Schema, models, model, type InferSchemaType, type Model, Types } from "mongoose";
+import { Schema, models, model, type InferSchemaType, type Model } from "mongoose";
 
 const channelSchema = new Schema(
   {
@@ -42,5 +42,5 @@ channelSchema.index(
   { unique: true, sparse: true, name: "unique_telegram_bot" }
 );
 
-export type ChannelDocument = InferSchemaType<typeof channelSchema> & { _id: Types.ObjectId };
+export type ChannelDocument = InferSchemaType<typeof channelSchema>;
 export const Channel = (models.Channel as Model<ChannelDocument>) || model("Channel", channelSchema);

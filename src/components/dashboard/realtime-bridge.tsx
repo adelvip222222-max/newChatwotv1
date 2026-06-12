@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { MessageSquare, X } from "lucide-react";
+import type { Socket } from "socket.io-client";
 import { useI18n } from "@/components/i18n-provider";
 
 type LiveMessage = {
@@ -30,28 +31,56 @@ type RealtimeMessagePayload = {
   contact?: { name?: string; email?: string; phone?: string };
 };
 
-function parseLiveMessage(raw: string): LiveMessage | null {
-  try {
-    const payload = JSON.parse(raw) as RealtimeMessagePayload;
-    const message = payload.message || {};
-    const conversationId = message.conversationId || payload.conversation?.id || "";
-    const id = message.id || `${conversationId}-${message.createdAt || Date.now()}`;
-    const direction = message.direction || "incoming";
-    if (!conversationId || direction !== "incoming") return null;
+type RealtimeEnvelope = {
+  id?: string;
+  type?: string;
+  payload?: unknown;
+  ts?: string;
+};
 
-    return {
-      id,
-      conversationId,
-      content: message.content || "",
-      createdAt: message.createdAt || new Date().toISOString(),
-      direction,
-      provider: message.provider || "website",
-      contact: {
-        name: payload.contact?.name || payload.contact?.email || payload.contact?.phone || "Customer",
-      },
-    };
+const realtimeEventTypes = [
+  "message.created",
+  "notification.created",
+  "message.updated",
+  "conversation.updated",
+  "conversation.assigned",
+  "conversation.deleted",
+  "delivery.updated",
+  "inbox.snapshot",
+  "sync.required",
+  "ready",
+  "heartbeat",
+  "error"
+];
+
+function parseLiveMessageFromPayload(rawPayload: unknown): LiveMessage | null {
+  const payload = rawPayload as RealtimeMessagePayload | null;
+  if (!payload || typeof payload !== "object") return null;
+
+  const message = payload.message || {};
+  const conversationId = message.conversationId || payload.conversation?.id || "";
+  const id = message.id || `${conversationId}-${message.createdAt || Date.now()}`;
+  const direction = message.direction || "incoming";
+  if (!conversationId || direction !== "incoming") return null;
+
+  return {
+    id,
+    conversationId,
+    content: message.content || "",
+    createdAt: message.createdAt || new Date().toISOString(),
+    direction,
+    provider: message.provider || "website",
+    contact: {
+      name: payload.contact?.name || payload.contact?.email || payload.contact?.phone || "Customer",
+    },
+  };
+}
+
+function parseSsePayload(event: MessageEvent) {
+  try {
+    return JSON.parse(event.data) as unknown;
   } catch {
-    return null;
+    return event.data;
   }
 }
 
@@ -59,43 +88,118 @@ export function RealtimeBridge() {
   const { locale } = useI18n();
   const [toast, setToast] = useState<LiveMessage | null>(null);
   const seenMessageIds = useRef<Set<string>>(new Set());
+  const audioContextRef = useRef<AudioContext | null>(null);
+
+  const playNotificationSound = () => {
+    if (typeof window === "undefined") return;
+    try {
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioContextClass) return;
+      const ctx = audioContextRef.current || new AudioContextClass();
+      audioContextRef.current = ctx;
+      const oscillator = ctx.createOscillator();
+      const gain = ctx.createGain();
+      oscillator.type = "sine";
+      oscillator.frequency.value = 880;
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.18, ctx.currentTime + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.18);
+      oscillator.connect(gain);
+      gain.connect(ctx.destination);
+      oscillator.start();
+      oscillator.stop(ctx.currentTime + 0.2);
+    } catch {
+      // Browser may block audio before the first user interaction.
+    }
+  };
 
   useEffect(() => {
-    const events = new EventSource("/api/realtime/stream");
+    let socket: Socket | null = null;
+    let eventSource: EventSource | null = null;
+    let fallbackStarted = false;
+    let cancelled = false;
+    let socketFallbackTimer: number | undefined;
 
-    const forwardRealtimeEvent = (type: string, event: MessageEvent) => {
-      let payload: unknown = null;
-      try {
-        payload = JSON.parse(event.data);
-      } catch {
-        payload = event.data;
-      }
-
+    const handleRealtimePayload = (type: string, payload: unknown) => {
       window.dispatchEvent(new CustomEvent("chatzi:realtime-event", { detail: { type, payload } }));
-    };
 
-    const handleMessage = (event: MessageEvent) => {
-      forwardRealtimeEvent(event.type, event);
-      const message = parseLiveMessage(event.data);
+      if (type !== "message.created" && type !== "notification.created") return;
+
+      const message = parseLiveMessageFromPayload(payload);
       if (!message || seenMessageIds.current.has(message.id)) return;
       seenMessageIds.current.add(message.id);
       setToast(message);
+      playNotificationSound();
       window.dispatchEvent(new CustomEvent("chatzi:incoming-message", { detail: message }));
     };
 
-    const forwardOnly = (event: MessageEvent) => forwardRealtimeEvent(event.type, event);
+    const startSseFallback = () => {
+      if (fallbackStarted || cancelled) return;
+      fallbackStarted = true;
+      eventSource = new EventSource("/api/realtime/stream");
 
-    events.addEventListener("message.created", handleMessage);
-    events.addEventListener("notification.created", handleMessage);
-    events.addEventListener("message.updated", forwardOnly);
-    events.addEventListener("conversation.updated", forwardOnly);
-    events.addEventListener("conversation.assigned", forwardOnly);
-    events.addEventListener("delivery.updated", forwardOnly);
-    events.addEventListener("inbox.snapshot", forwardOnly);
-    events.addEventListener("sync.required", forwardOnly);
-    events.addEventListener("error", () => undefined);
+      const forwardSse = (event: MessageEvent) => {
+        handleRealtimePayload(event.type, parseSsePayload(event));
+      };
 
-    return () => events.close();
+      realtimeEventTypes.forEach((type) => eventSource?.addEventListener(type, forwardSse));
+      eventSource.addEventListener("error", () => undefined);
+    };
+
+    const startSocket = async () => {
+      try {
+        const { io } = await import("socket.io-client");
+        if (cancelled) return;
+
+        socket = io({
+          path: "/socket.io",
+          withCredentials: true,
+          transports: ["websocket", "polling"],
+          timeout: 5000,
+          reconnection: true,
+          reconnectionAttempts: Infinity,
+          reconnectionDelay: 1000,
+          reconnectionDelayMax: 8000,
+        });
+
+        socketFallbackTimer = window.setTimeout(() => {
+          if (!socket?.connected) startSseFallback();
+        }, 3000);
+
+        socket.on("connect", () => {
+          if (socketFallbackTimer) window.clearTimeout(socketFallbackTimer);
+          if (eventSource) {
+            eventSource.close();
+            eventSource = null;
+            fallbackStarted = false;
+          }
+        });
+
+        socket.on("connect_error", () => {
+          startSseFallback();
+        });
+
+        socket.on("realtime:event", (event: RealtimeEnvelope) => {
+          if (!event?.type) return;
+          handleRealtimePayload(event.type, event.payload);
+        });
+
+        realtimeEventTypes.forEach((type) => {
+          socket?.on(type, (payload: unknown) => handleRealtimePayload(type, payload));
+        });
+      } catch {
+        startSseFallback();
+      }
+    };
+
+    void startSocket();
+
+    return () => {
+      cancelled = true;
+      if (socketFallbackTimer) window.clearTimeout(socketFallbackTimer);
+      eventSource?.close();
+      socket?.disconnect();
+    };
   }, []);
 
   useEffect(() => {

@@ -3,6 +3,7 @@ export type RealtimeEventType =
   | "message.updated"
   | "conversation.updated"
   | "conversation.assigned"
+  | "conversation.deleted"
   | "notification.created"
   | "delivery.updated"
   | "inbox.snapshot"

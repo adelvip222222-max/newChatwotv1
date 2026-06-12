@@ -21,6 +21,8 @@ import {
   PenLine,
   RefreshCcw,
   Save,
+  Trash2,
+  Wand2,
   ScrollText,
   Settings2,
   ShoppingCart,
@@ -624,6 +626,11 @@ function KnowledgeUploadPanel({
 
 // ─── Documents Table ────────────────────────────────────────────────────────────
 function DocumentsTable({ title, documents, isAr }: { title: string; documents: DocumentRow[]; isAr: boolean }) {
+  const router = useRouter();
+  const [workingId, setWorkingId] = useState("");
+  const [editDoc, setEditDoc] = useState<null | { id: string; title: string; rawText: string; sourceUrl: string; tags: string[] }>(null);
+  const [tableError, setTableError] = useState("");
+
   const statusBadge = (status: string) => {
     if (status === "ready")      return "badge-success";
     if (status === "error")      return "badge-error";
@@ -632,18 +639,127 @@ function DocumentsTable({ title, documents, isAr }: { title: string; documents: 
     return "badge-neutral";
   };
   const statusLabel: Record<string, string> = {
-    ready: isAr ? "جاهز" : "Ready", 
-    error: isAr ? "خطأ" : "Error", 
+    ready: isAr ? "جاهز" : "Ready",
+    error: isAr ? "خطأ" : "Error",
     duplicate: isAr ? "مكرر" : "Duplicate",
-    processing: isAr ? "يُعالج" : "Processing", 
+    processing: isAr ? "يُعالج" : "Processing",
     pending: isAr ? "بانتظار" : "Pending",
+    needs_retraining: isAr ? "يحتاج تدريب" : "Needs retraining",
   };
+
+  async function readJson<T = any>(response: Response): Promise<T> {
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || (isAr ? "فشل الطلب." : "Request failed."));
+    return body as T;
+  }
+
+  async function openEdit(id: string) {
+    setTableError("");
+    setWorkingId(id);
+    try {
+      const body = await readJson<{ document: { id: string; title: string; rawText: string; sourceUrl: string; tags: string[] } }>(
+        await fetch(`/api/knowledge/${id}`, { cache: "no-store" })
+      );
+      setEditDoc(body.document);
+    } catch (error) {
+      setTableError(error instanceof Error ? error.message : "Error");
+    } finally {
+      setWorkingId("");
+    }
+  }
+
+  async function saveEdit() {
+    if (!editDoc) return;
+    setWorkingId(editDoc.id);
+    setTableError("");
+    try {
+      await readJson(await fetch(`/api/knowledge/${editDoc.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: editDoc.title,
+          rawText: editDoc.rawText,
+          sourceUrl: editDoc.sourceUrl,
+          tags: editDoc.tags
+        })
+      }));
+      setEditDoc(null);
+      router.refresh();
+    } catch (error) {
+      setTableError(error instanceof Error ? error.message : "Error");
+    } finally {
+      setWorkingId("");
+    }
+  }
+
+  async function retrain(id: string) {
+    setWorkingId(id);
+    setTableError("");
+    try {
+      await readJson(await fetch("/api/knowledge/retrain", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ documentId: id })
+      }));
+      router.refresh();
+    } catch (error) {
+      setTableError(error instanceof Error ? error.message : "Error");
+    } finally {
+      setWorkingId("");
+    }
+  }
+
+  async function rewrite(id: string) {
+    if (!window.confirm(isAr ? "إعادة صياغة هذا المصدر بالذكاء الاصطناعي؟" : "Rewrite this source with AI?")) return;
+    setWorkingId(id);
+    setTableError("");
+    try {
+      await readJson(await fetch(`/api/knowledge/${id}/rewrite`, { method: "POST" }));
+      router.refresh();
+    } catch (error) {
+      setTableError(error instanceof Error ? error.message : "Error");
+    } finally {
+      setWorkingId("");
+    }
+  }
+
+  async function remove(id: string) {
+    if (!window.confirm(isAr ? "حذف مصدر المعرفة نهائيًا؟" : "Delete this knowledge source permanently?")) return;
+    setWorkingId(id);
+    setTableError("");
+    try {
+      await readJson(await fetch(`/api/knowledge/${id}`, { method: "DELETE" }));
+      router.refresh();
+    } catch (error) {
+      setTableError(error instanceof Error ? error.message : "Error");
+    } finally {
+      setWorkingId("");
+    }
+  }
+
+  const Actions = ({ doc }: { doc: DocumentRow }) => (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <button type="button" className="rounded-md border border-slate-200 px-2 py-1 text-xs font-bold hover:bg-slate-50" onClick={() => void openEdit(doc.id)} disabled={workingId === doc.id}>
+        <PenLine size={13} className="inline" /> {isAr ? "تعديل" : "Edit"}
+      </button>
+      <button type="button" className="rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-xs font-bold text-blue-700 hover:bg-blue-100" onClick={() => void retrain(doc.id)} disabled={workingId === doc.id}>
+        <RefreshCcw size={13} className={`inline ${workingId === doc.id ? "animate-spin" : ""}`} /> {isAr ? "تدريب" : "Train"}
+      </button>
+      <button type="button" className="rounded-md border border-violet-200 bg-violet-50 px-2 py-1 text-xs font-bold text-violet-700 hover:bg-violet-100" onClick={() => void rewrite(doc.id)} disabled={workingId === doc.id}>
+        <Wand2 size={13} className="inline" /> AI
+      </button>
+      <button type="button" className="rounded-md border border-red-200 bg-red-50 px-2 py-1 text-xs font-bold text-red-700 hover:bg-red-100" onClick={() => void remove(doc.id)} disabled={workingId === doc.id}>
+        <Trash2 size={13} className="inline" /> {isAr ? "حذف" : "Delete"}
+      </button>
+    </div>
+  );
 
   return (
     <section className="panel overflow-hidden">
       <div className="border-b border-slate-100 p-4 flex items-center justify-between">
         <h2 className="font-bold text-ink">{title} <span className="text-slate-400">({documents.length})</span></h2>
       </div>
+      {tableError ? <p className="mx-4 mt-3 rounded-md bg-red-50 p-3 text-sm text-red-700">{tableError}</p> : null}
       {documents.length ? (
         <>
           <div className="space-y-3 p-3 md:hidden">
@@ -662,12 +778,13 @@ function DocumentsTable({ title, documents, isAr }: { title: string; documents: 
                 </div>
                 {doc.expiresAt ? <p className="mt-2 text-xs text-amber-600">{isAr ? "ينتهي:" : "Expires:"} {new Date(doc.expiresAt).toLocaleDateString(isAr ? "ar-EG" : "en-US")}</p> : null}
                 {doc.statusReason ? <p className="mt-2 text-xs text-red-500">{doc.statusReason}</p> : null}
+                <div className="mt-3"><Actions doc={doc} /></div>
               </article>
             ))}
           </div>
 
           <div className="hidden overflow-x-auto md:block">
-            <table className="w-full min-w-[700px] text-sm">
+            <table className="w-full min-w-[920px] text-sm">
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
                   <th className="p-3 text-right rtl:text-right ltr:text-left">{isAr ? "المستند" : "Document"}</th>
@@ -675,6 +792,7 @@ function DocumentsTable({ title, documents, isAr }: { title: string; documents: 
                   <th className="p-3 text-right rtl:text-right ltr:text-left">{isAr ? "الحالة" : "Status"}</th>
                   <th className="p-3 text-right rtl:text-right ltr:text-left">{isAr ? "الأجزاء" : "Chunks"}</th>
                   <th className="p-3 text-right rtl:text-right ltr:text-left">{isAr ? "آخر تحديث" : "Last Update"}</th>
+                  <th className="p-3 text-right rtl:text-right ltr:text-left">{isAr ? "إجراءات" : "Actions"}</th>
                 </tr>
               </thead>
               <tbody>
@@ -686,13 +804,10 @@ function DocumentsTable({ title, documents, isAr }: { title: string; documents: 
                       {doc.statusReason ? <p className="mt-0.5 text-xs text-red-500">{doc.statusReason}</p> : null}
                     </td>
                     <td className="p-3 text-slate-500">{doc.sourceType}</td>
-                    <td className="p-3">
-                      <span className={`badge ${statusBadge(doc.status)}`}>
-                        {statusLabel[doc.status] || doc.status}
-                      </span>
-                    </td>
+                    <td className="p-3"><span className={`badge ${statusBadge(doc.status)}`}>{statusLabel[doc.status] || doc.status}</span></td>
                     <td className="p-3 text-center">{doc.chunkCount}</td>
                     <td className="p-3 text-slate-500">{doc.updatedAt ? new Date(doc.updatedAt).toLocaleDateString(isAr ? "ar-EG" : "en-US") : "—"}</td>
+                    <td className="p-3"><Actions doc={doc} /></td>
                   </tr>
                 ))}
               </tbody>
@@ -700,10 +815,44 @@ function DocumentsTable({ title, documents, isAr }: { title: string; documents: 
           </div>
         </>
       ) : (
-        <p className="p-6 text-sm text-slate-500">
-          {isAr ? "لا توجد مستندات بعد. أضف أول مصدر معرفة من الأعلى." : "No documents yet. Add your first knowledge source from above."}
-        </p>
+        <p className="p-6 text-sm text-slate-500">{isAr ? "لا توجد مستندات بعد. أضف أول مصدر معرفة من الأعلى." : "No documents yet. Add your first knowledge source from above."}</p>
       )}
+
+      {editDoc ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
+          <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl dark:bg-slate-950">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <h3 className="text-lg font-bold text-ink">{isAr ? "تعديل مصدر المعرفة" : "Edit knowledge source"}</h3>
+              <button type="button" className="rounded-md px-2 py-1 text-sm font-bold text-slate-500 hover:bg-slate-100" onClick={() => setEditDoc(null)}>×</button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="label">{isAr ? "العنوان" : "Title"}</label>
+                <input className="field" value={editDoc.title} onChange={(e) => setEditDoc({ ...editDoc, title: e.target.value })} />
+              </div>
+              <div>
+                <label className="label">{isAr ? "الرابط" : "URL"}</label>
+                <input className="field" value={editDoc.sourceUrl} onChange={(e) => setEditDoc({ ...editDoc, sourceUrl: e.target.value })} />
+              </div>
+              <div>
+                <label className="label">{isAr ? "الوسوم مفصولة بفواصل" : "Tags comma-separated"}</label>
+                <input className="field" value={editDoc.tags.join(", ")} onChange={(e) => setEditDoc({ ...editDoc, tags: e.target.value.split(",").map((item) => item.trim()).filter(Boolean) })} />
+              </div>
+              <div>
+                <label className="label">{isAr ? "المحتوى" : "Content"}</label>
+                <textarea className="field min-h-[260px] font-mono text-sm" value={editDoc.rawText} onChange={(e) => setEditDoc({ ...editDoc, rawText: e.target.value })} />
+              </div>
+              <div className="flex flex-wrap justify-end gap-2">
+                <button type="button" className="btn-secondary" onClick={() => setEditDoc(null)}>{isAr ? "إلغاء" : "Cancel"}</button>
+                <button type="button" className="btn-primary" onClick={() => void saveEdit()} disabled={workingId === editDoc.id}>
+                  {workingId === editDoc.id ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+                  {isAr ? "حفظ" : "Save"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

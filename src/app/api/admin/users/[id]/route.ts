@@ -4,11 +4,11 @@ import { requireSuperAdmin } from "@/server/auth/guards";
 import { User } from "@/lib/models";
 import { connectToDatabase } from "@/lib/mongodb";
 import { TENANT_USER_LIMITS } from "@/lib/user-admin";
-import { roles } from "@/server/permissions/roles";
+const tenantEditableRoles = ["admin", "manager", "agent", "viewer"] as const;
 
 const schema = z.object({
   isActive: z.boolean().optional(),
-  role: z.enum(roles).refine((role) => role !== "owner", "Owner users cannot be assigned here.").optional()
+  role: z.enum(tenantEditableRoles).optional()
 });
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {

@@ -5,13 +5,13 @@ import { requireSuperAdmin } from "@/server/auth/guards";
 import { Tenant, User } from "@/lib/models";
 import { connectToDatabase } from "@/lib/mongodb";
 import { TENANT_USER_LIMITS } from "@/lib/user-admin";
-import { roles } from "@/server/permissions/roles";
+const tenantEditableRoles = ["admin", "manager", "agent", "viewer"] as const;
 
 const schema = z.object({
   name: z.string().min(2).max(120),
   email: z.string().email().max(180),
   password: z.string().min(12).max(128).regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$/, "Password must include uppercase, lowercase, and a number."),
-  role: z.enum(roles).refine((role) => role !== "owner", "Owner users cannot be created here.")
+  role: z.enum(tenantEditableRoles)
 });
 
 export async function POST(request: Request) {

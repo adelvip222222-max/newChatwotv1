@@ -104,8 +104,10 @@ function StatCard({ title, value, icon }: { title: string; value: string | numbe
 
 function RoleBadge({ role }: { role: string }) {
   switch (role) {
+    case "super-admin":
+      return <span className="rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-bold text-violet-700 dark:bg-violet-900 dark:text-violet-300">مدير المنصة</span>;
     case "owner":
-      return <span className="rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-bold text-violet-700 dark:bg-violet-900 dark:text-violet-300">مدير النظام</span>;
+      return <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700 dark:bg-indigo-900 dark:text-indigo-300">مالك قديم</span>;
     case "admin":
       return <span className="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-bold text-blue-700 dark:bg-blue-900 dark:text-blue-300">مشرف</span>;
     case "agent":

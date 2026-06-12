@@ -98,7 +98,7 @@ type ContactMetric = {
   conversationCount: number;
   openConversationCount: number;
   messageCount: number;
-  lastMessageAt?: Date | null;
+  lastMessageAt?: Date;
   channels: string[];
 };
 

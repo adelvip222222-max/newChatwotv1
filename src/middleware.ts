@@ -19,7 +19,13 @@ export default withAuth(
     const token = req.nextauth.token;
     const pathname = req.nextUrl.pathname;
 
-    if (isProtectedPlatformPath(pathname) && token?.isSuperAdmin !== true) {
+    const isSuperAdmin = token?.isSuperAdmin === true || token?.role === "super-admin";
+
+    if (isSuperAdmin && pathname.startsWith("/dashboard") && !pathname.startsWith("/api/")) {
+      return NextResponse.redirect(new URL("/admin", req.url));
+    }
+
+    if (isProtectedPlatformPath(pathname) && !isSuperAdmin) {
       if (isApiPath(pathname)) {
         return NextResponse.json(
           { message: "Forbidden: super-admin access is required." },

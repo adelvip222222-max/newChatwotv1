@@ -18,6 +18,7 @@ import {
   Loader2,
   Mail,
   Menu,
+  Mic,
   MessageCircle,
   MessageSquare,
   MoreHorizontal,
@@ -30,6 +31,7 @@ import {
   StickyNote,
   Tag,
   Timer,
+  Trash2,
   User,
   UserPlus,
   Users,
@@ -92,7 +94,7 @@ type AttachmentDraft = {
   name: string;
   size: number;
   mimeType: string;
-  type: "image" | "pdf" | "file";
+  type: "image" | "audio" | "pdf" | "file";
   url: string;
 };
 
@@ -268,7 +270,12 @@ const copy = {
     sendSuggestion: "إرسال",
     workspace: "Workspace",
     loaded: "loaded",
-    open: "open"
+    open: "open",
+    archive: "أرشيف",
+    delete: "حذف",
+    confirmDelete: "هل تريد حذف هذه المحادثة نهائيًا؟",
+    startRecording: "تسجيل صوت",
+    stopRecording: "إيقاف التسجيل"
   },
   en: {
     inbox: "Inbox",
@@ -324,7 +331,12 @@ const copy = {
     sendSuggestion: "Send",
     workspace: "Workspace",
     loaded: "loaded",
-    open: "open"
+    open: "open",
+    archive: "Archive",
+    delete: "Delete",
+    confirmDelete: "Delete this conversation permanently?",
+    startRecording: "Record audio",
+    stopRecording: "Stop recording"
   }
 } as const;
 
@@ -405,6 +417,10 @@ export function AIInboxClient({
   const [listDrawerOpen, setListDrawerOpen] = useState(false);
   const [detailsDrawerOpen, setDetailsDrawerOpen] = useState(false);
   const [savedRepliesOpen, setSavedRepliesOpen] = useState(false);
+  const [recordingAudio, setRecordingAudio] = useState(false);
+
+  const audioChunksRef = useRef<Blob[]>([]);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
 
   const searchRef = useRef<HTMLInputElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
@@ -537,6 +553,16 @@ export function AIInboxClient({
       }
     };
 
+    const handleConversationDeleted = (payload: any) => {
+      const deletedId = payload?.conversationId || payload?.conversation?.id || "";
+      if (!deletedId) return handleConversationChange();
+      setConversations((current) => current.filter((conversation) => conversation.id !== deletedId));
+      if (selectedIdRef.current === deletedId) {
+        setSelectedId("");
+        router.replace("/dashboard/conversations", { scroll: false });
+      }
+    };
+
     const handleSyncRequired = () => {
       if (fallbackSyncInFlight) return;
       fallbackSyncInFlight = true;
@@ -549,6 +575,7 @@ export function AIInboxClient({
       const detail = (event as CustomEvent<{ type?: string; payload?: unknown }>).detail;
       if (!detail?.type) return;
       if (detail.type === "message.created") handleMessageCreated((detail.payload || {}) as RealtimeMessageCreatedPayload);
+      else if (detail.type === "conversation.deleted") handleConversationDeleted(detail.payload || {});
       else if (["message.updated", "conversation.updated", "conversation.assigned", "delivery.updated"].includes(detail.type)) handleConversationChange();
       else if (["inbox.snapshot", "sync.required"].includes(detail.type)) handleSyncRequired();
     };
@@ -631,6 +658,54 @@ export function AIInboxClient({
     if (attachmentInputRef.current) attachmentInputRef.current.value = "";
   };
 
+  const startAudioRecording = async () => {
+    if (recordingAudio || sendingReply) return;
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      setError(locale === "ar" ? "المتصفح لا يدعم تسجيل الصوت." : "Audio recording is not supported by this browser.");
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      audioChunksRef.current = [];
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) audioChunksRef.current.push(event.data);
+      };
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((track) => track.stop());
+        const mimeType = recorder.mimeType || "audio/webm";
+        const blob = new Blob(audioChunksRef.current, { type: mimeType });
+        audioChunksRef.current = [];
+        const name = `voice-${Date.now()}.${mimeType.includes("mpeg") ? "mp3" : "webm"}`;
+        const url = await blobToDataUrl(blob);
+        setDraftAttachments((current) => [
+          ...current,
+          {
+            id: `${name}-${blob.size}`,
+            name,
+            size: blob.size,
+            mimeType,
+            type: "audio",
+            url
+          }
+        ]);
+        setRecordingAudio(false);
+      };
+      mediaRecorderRef.current = recorder;
+      recorder.start();
+      setRecordingAudio(true);
+    } catch {
+      setError(locale === "ar" ? "تعذر فتح الميكروفون." : "Could not open microphone.");
+      setRecordingAudio(false);
+    }
+  };
+
+  const stopAudioRecording = () => {
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state !== "inactive") recorder.stop();
+    else setRecordingAudio(false);
+  };
+
   const sendReply = async (text = composer, includeAttachments = true) => {
     const attachments = includeAttachments ? draftAttachments : [];
     const content = text.trim() || (attachments.length ? (locale === "ar" ? "مرفق" : "Attachment") : "");
@@ -680,6 +755,19 @@ export function AIInboxClient({
     });
     await readJson(response);
     await Promise.all([fetchList(false), selectedId ? fetchDetail(selectedId) : Promise.resolve()]);
+  };
+
+  const deleteConversation = async () => {
+    if (!selectedId) return;
+    if (!window.confirm(labels.confirmDelete)) return;
+    const deletingId = selectedId;
+    const response = await fetch(`/api/inbox/conversations/${deletingId}`, { method: "DELETE" });
+    await readJson(response);
+    setConversations((current) => current.filter((item) => item.id !== deletingId));
+    const next = conversations.find((item) => item.id !== deletingId)?.id || "";
+    setSelectedId(next);
+    router.replace(next ? `/dashboard/conversations?conversationId=${next}` : "/dashboard/conversations", { scroll: false });
+    await fetchList(false);
   };
 
   const updateAssignment = async (nextAgent = detail?.conversation.assigneeId || "", nextTeam = detail?.conversation.teamId || "") => {
@@ -770,12 +858,12 @@ export function AIInboxClient({
           </button>
         </div>
 
-        <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-          <Metric label="AI" value={`${analytics.aiResolutionRate}%`} />
-          <Metric label="Esc" value={`${analytics.escalationRate}%`} tone="amber" />
+        <div className="mt-2 flex items-center gap-2 text-[11px] font-bold text-slate-500 dark:text-slate-400">
+          <span className="rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-blue-700 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-300">AI {analytics.aiResolutionRate}%</span>
+          <span className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-amber-700 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300">ESC {analytics.escalationRate}%</span>
         </div>
 
-        <div className="mt-3 flex gap-1 overflow-x-auto pb-1 no-scrollbar">
+        <div className="mt-2 flex gap-1 overflow-x-auto pb-1 no-scrollbar">
           {viewItems.map((item) => {
             const Icon = item.icon;
             return (
@@ -796,7 +884,7 @@ export function AIInboxClient({
           })}
         </div>
 
-        <div className="mt-3 relative">
+        <div className="mt-2 relative">
           <Search className="pointer-events-none absolute left-3 top-2.5 text-slate-400 rtl:left-auto rtl:right-3" size={16} />
           <input
             ref={searchRef}
@@ -807,7 +895,7 @@ export function AIInboxClient({
           />
         </div>
 
-        <div className="mt-3 grid grid-cols-[1fr_1fr_auto] gap-2">
+        <div className="mt-2 grid grid-cols-[1fr_1fr_auto] gap-2">
           <Select label={labels.status} value={status} onChange={setStatus} options={["open", "pending", "resolved", "closed", "snoozed", "archived"]} />
           <Select label={labels.priority} value={priority} onChange={setPriority} options={["low", "medium", "high", "urgent"]} />
           <button type="button" className="btn-secondary h-10 px-2 text-xs" onClick={() => void fetchList(false)}>
@@ -816,7 +904,7 @@ export function AIInboxClient({
           </button>
         </div>
 
-        <div className="mt-3 flex gap-1 overflow-x-auto pb-1 no-scrollbar">
+        <div className="mt-2 flex gap-1 overflow-x-auto pb-1 no-scrollbar">
           <button
             type="button"
             onClick={() => setChannel("")}
@@ -1009,7 +1097,7 @@ export function AIInboxClient({
   );
 
   return (
-    <div className="-mt-5 -mx-4 -mb-mobile-nav grid grid-rows-1 h-[calc(100dvh-64px)] min-h-[400px] grid-cols-1 overflow-hidden border-t border-slate-200 bg-slate-100 text-slate-950 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 lg:-mt-6 lg:-mx-8 lg:-mb-6 lg:min-h-[400px] lg:grid-cols-[minmax(18rem,22rem)_minmax(0,1fr)] xl:grid-cols-[minmax(18rem,22rem)_minmax(0,1fr)_20rem]">
+    <div className="-mt-5 -mx-4 -mb-mobile-nav grid grid-rows-1 h-[calc(100dvh-64px)] min-h-[400px] grid-cols-1 overflow-hidden border-t border-slate-200 bg-slate-100 text-slate-950 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 lg:-mt-6 lg:-mx-8 lg:-mb-6 lg:min-h-[400px] lg:grid-cols-[minmax(18rem,23rem)_minmax(0,1fr)] xl:grid-cols-[minmax(18rem,23rem)_minmax(0,1fr)_20rem]">
       <aside className="hidden min-w-0 min-h-0 border-r border-slate-200 dark:border-slate-800 lg:block">
         {listPane}
       </aside>
@@ -1061,6 +1149,14 @@ export function AIInboxClient({
                   <button type="button" className="btn-secondary hidden px-3 sm:inline-flex" onClick={() => void fetchDetail(detail.conversation.id, true)} disabled={loadingDetail}>
                     <RefreshCcw size={15} />
                     {labels.refreshAi}
+                  </button>
+                  <button type="button" className="btn-secondary hidden px-3 sm:inline-flex" onClick={() => void changeStatus("archived")}>
+                    <Archive size={15} />
+                    {labels.archive}
+                  </button>
+                  <button type="button" className="btn-secondary hidden px-3 text-red-600 hover:bg-red-50 sm:inline-flex dark:text-red-300 dark:hover:bg-red-950/30" onClick={() => void deleteConversation()}>
+                    <Trash2 size={15} />
+                    {labels.delete}
                   </button>
                   <button type="button" className="btn-primary hidden px-3 sm:inline-flex" onClick={() => void changeStatus("resolved")}>
                     <Check size={15} />
@@ -1131,7 +1227,7 @@ export function AIInboxClient({
                 ) : null}
 
                 <div className="flex items-end gap-2">
-                  <input ref={attachmentInputRef} type="file" className="hidden" multiple onChange={(event) => void prepareAttachments(event.target.files)} />
+                  <input ref={attachmentInputRef} type="file" className="hidden" multiple accept="image/*,audio/*,.pdf,.doc,.docx,.txt,.csv" onChange={(event) => void prepareAttachments(event.target.files)} />
                   <button
                     type="button"
                     className="touch-target shrink-0 rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-900"
@@ -1140,6 +1236,16 @@ export function AIInboxClient({
                     disabled={sendingReply}
                   >
                     <Paperclip size={18} className="mx-auto" />
+                  </button>
+                  <button
+                    type="button"
+                    className={`touch-target shrink-0 rounded-md border ${recordingAudio ? "border-red-300 bg-red-50 text-red-600 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300" : "border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-900"}`}
+                    onClick={() => (recordingAudio ? stopAudioRecording() : void startAudioRecording())}
+                    aria-label={recordingAudio ? labels.stopRecording : labels.startRecording}
+                    disabled={sendingReply}
+                    title={recordingAudio ? labels.stopRecording : labels.startRecording}
+                  >
+                    <Mic size={18} className="mx-auto" />
                   </button>
                   <textarea
                     ref={composerRef}
@@ -1310,17 +1416,24 @@ function TimelineEntry({ item }: { item: TimelineItem }) {
           <p className="whitespace-pre-wrap text-sm leading-6">{item.content}</p>
           {item.attachments?.length ? (
             <div className="mt-2 space-y-1.5">
-              {item.attachments.map((attachment) => (
-                <div
-                  key={attachment.id || attachment.url || attachment.name}
-                  className={`flex max-w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs ${
-                    outgoing ? "bg-white/10 text-white" : "bg-slate-50 text-slate-700 dark:bg-slate-900 dark:text-slate-200"
-                  }`}
-                >
-                  <AttachmentIcon attachment={attachment} />
-                  <span className="min-w-0 truncate">{attachment.name || attachment.mimeType || "Attachment"}</span>
-                </div>
-              ))}
+              {item.attachments.map((attachment) => {
+                const isAudio = attachment.type === "audio" || attachment.mimeType?.startsWith("audio/");
+                return (
+                  <div
+                    key={attachment.id || attachment.url || attachment.name}
+                    className={`flex max-w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs ${
+                      outgoing ? "bg-white/10 text-white" : "bg-slate-50 text-slate-700 dark:bg-slate-900 dark:text-slate-200"
+                    }`}
+                  >
+                    <AttachmentIcon attachment={attachment} />
+                    {isAudio && attachment.url ? (
+                      <audio controls src={attachment.url} className="h-8 max-w-[220px]" />
+                    ) : (
+                      <span className="min-w-0 truncate">{attachment.name || attachment.mimeType || "Attachment"}</span>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           ) : null}
           <div className={`mt-1 flex flex-wrap items-center gap-1.5 text-[11px] ${outgoing ? "text-blue-100" : "text-slate-400"}`}>
@@ -1460,6 +1573,9 @@ function AttachmentIcon({ attachment }: { attachment: Pick<AttachmentDraft, "typ
   if (attachment.type === "image" || attachment.mimeType?.startsWith("image/")) {
     return <img src={attachment.url} alt={attachment.name || ""} className="h-7 w-7 shrink-0 rounded object-cover" />;
   }
+  if (attachment.type === "audio" || attachment.mimeType?.startsWith("audio/")) {
+    return <Mic size={16} className="shrink-0" />;
+  }
   if (attachment.type === "pdf" || attachment.mimeType === "application/pdf") {
     return <FileText size={16} className="shrink-0" />;
   }
@@ -1468,6 +1584,7 @@ function AttachmentIcon({ attachment }: { attachment: Pick<AttachmentDraft, "typ
 
 function attachmentType(file: File): AttachmentDraft["type"] {
   if (file.type.startsWith("image/")) return "image";
+  if (file.type.startsWith("audio/")) return "audio";
   if (file.type === "application/pdf") return "pdf";
   return "file";
 }
@@ -1478,6 +1595,14 @@ function fileToDataUrl(file: File) {
     reader.onload = () => resolve(String(reader.result || ""));
     reader.onerror = reject;
     reader.readAsDataURL(file);
+  });
+}
+function blobToDataUrl(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
   });
 }
 

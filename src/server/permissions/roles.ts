@@ -1,12 +1,13 @@
 import { permissions, type Permission } from "@/server/permissions/permissions";
 
-export const roles = ["owner", "admin", "manager", "agent", "viewer"] as const;
+export const roles = ["super-admin", "owner", "admin", "manager", "agent", "viewer"] as const;
 
 export type Role = (typeof roles)[number];
 
 const allPermissions: Permission[] = Object.values(permissions);
 
 export const rolePermissions: Record<Role, readonly Permission[]> = {
+  "super-admin": allPermissions,
   owner: allPermissions,
   admin: allPermissions,
   manager: [

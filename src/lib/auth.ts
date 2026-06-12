@@ -44,7 +44,7 @@ async function provisionOAuthUser(nextAuthUser: any, profile: any) {
     nextAuthUser.role = user.role;
     nextAuthUser.tenantId = user.tenantId.toString();
     nextAuthUser.isActive = true;
-    nextAuthUser.isSuperAdmin = (user as any).isSuperAdmin === true;
+    nextAuthUser.isSuperAdmin = (user as any).isSuperAdmin === true || user.role === "super-admin";
     return true;
   }
 
@@ -68,7 +68,7 @@ async function provisionOAuthUser(nextAuthUser: any, profile: any) {
     name,
     email,
     password,
-    role: "owner",
+    role: "admin",
     tenantId: tenant._id,
     ownerId: userId,
     isActive: true,
@@ -100,7 +100,7 @@ async function provisionOAuthUser(nextAuthUser: any, profile: any) {
   nextAuthUser.role = user.role;
   nextAuthUser.tenantId = tenant._id.toString();
   nextAuthUser.isActive = true;
-  nextAuthUser.isSuperAdmin = false;
+  nextAuthUser.isSuperAdmin = user.role === "super-admin";
   return true;
 }
 
@@ -146,7 +146,7 @@ export const authOptions: AuthOptions = {
           role: user.role,
           tenantId: user.tenantId.toString(),
           isActive: true,
-          isSuperAdmin: (user as any).isSuperAdmin === true
+          isSuperAdmin: (user as any).isSuperAdmin === true || user.role === "super-admin"
         };
       }
     }),
@@ -171,7 +171,7 @@ export const authOptions: AuthOptions = {
         token.role = user.role;
         token.tenantId = user.tenantId;
         token.isActive = user.isActive;
-        token.isSuperAdmin = user.isSuperAdmin === true;
+        token.isSuperAdmin = user.isSuperAdmin === true || user.role === "super-admin";
       }
       return token;
     },

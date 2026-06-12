@@ -54,7 +54,7 @@ export async function POST(request: Request) {
       name: body.name,
       email,
       password,
-      role: "owner",
+      role: "admin",
       tenantId: tenant._id,
       ownerId: userId,
       isActive: true

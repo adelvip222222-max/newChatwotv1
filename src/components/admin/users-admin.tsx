@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Save, UserPlus } from "lucide-react";
 import type { Role } from "@/server/permissions/roles";
 
-type LimitedRole = Exclude<Role, "owner">;
+type LimitedRole = Exclude<Role, "owner" | "super-admin">;
 
 type ManagedUser = {
   id: string;
@@ -176,6 +176,7 @@ function Quota({ title, used, limit }: { title: string; used: number; limit: num
 }
 
 function roleLabel(role: Role) {
+  if (role === "super-admin") return "Platform Super Admin";
   if (role === "owner") return "Primary owner";
   return editableRoles.find((item) => item.value === role)?.label ?? role;
 }

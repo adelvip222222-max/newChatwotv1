@@ -17,7 +17,8 @@
     "lint": "next lint",
     "test": "jest",
     "queue:requeue-outbound": "ts-node -r tsconfig-paths/register --compiler-options \"{\\\"module\\\":\\\"commonjs\\\",\\\"moduleResolution\\\":\\\"node\\\"}\" scripts/requeue-outbound.ts",
-    "knowledge:requeue": "ts-node -r tsconfig-paths/register --compiler-options \"{\\\"module\\\":\\\"commonjs\\\",\\\"moduleResolution\\\":\\\"node\\\"}\" scripts/requeue-knowledge.ts"
+    "knowledge:requeue": "ts-node -r tsconfig-paths/register --compiler-options \"{\\\"module\\\":\\\"commonjs\\\",\\\"moduleResolution\\\":\\\"node\\\"}\" scripts/requeue-knowledge.ts",
+    "socket:server": "ts-node -r tsconfig-paths/register --compiler-options \"{\\\"module\\\":\\\"commonjs\\\",\\\"moduleResolution\\\":\\\"node\\\"}\" server/socket-server.ts"
   },
   "dependencies": {
     "@auth/mongodb-adapter": "^3.10.0",
@@ -46,7 +47,9 @@
     "swr": "^2.4.1",
     "ts-node": "^10.9.2",
     "tsconfig-paths": "^4.2.0",
-    "zod": "^3.24.1"
+    "zod": "^3.24.1",
+    "socket.io": "^4.8.1",
+    "socket.io-client": "^4.8.1"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",

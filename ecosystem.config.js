@@ -115,6 +115,23 @@ module.exports = {
       env: workerEnv
     },
 
+
+    {
+      name: 'chatzi-socket',
+      script: 'node_modules/ts-node/dist/bin.js',
+      args: '--transpile-only -r tsconfig-paths/register --compiler-options {"module":"commonjs","moduleResolution":"node"} server/socket-server.ts',
+      instances: 1,
+      exec_mode: 'fork',
+      max_memory_restart: '512M',
+      out_file: './logs/chatzi-socket.out.log',
+      error_file: './logs/chatzi-socket.err.log',
+      env: {
+        ...workerEnv,
+        SOCKET_IO_PORT: loadedEnv.SOCKET_IO_PORT || '4001',
+        SOCKET_IO_PATH: loadedEnv.SOCKET_IO_PATH || '/socket.io'
+      }
+    },
+
     {
       name: 'worker-knowledge',
       script: 'node_modules/ts-node/dist/bin.js',

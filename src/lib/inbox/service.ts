@@ -484,6 +484,33 @@ export async function updateInboxStatus(input: {
   return { success: true, status: conversation.status };
 }
 
+export async function deleteInboxConversation(input: {
+  tenantId: string;
+  userId: string;
+  conversationId: string;
+}) {
+  await connectToDatabase();
+  if (!Types.ObjectId.isValid(input.conversationId)) throw new Error("Invalid conversation id.");
+
+  const conversation = await Conversation.findOne({ _id: input.conversationId, tenantId: input.tenantId }).select("_id");
+  if (!conversation) throw new Error("Conversation not found.");
+
+  await Promise.all([
+    Message.deleteMany({ tenantId: input.tenantId, conversationId: conversation._id }),
+    ConversationNote.deleteMany({ tenantId: input.tenantId, conversationId: conversation._id }),
+    ConversationEvent.deleteMany({ tenantId: input.tenantId, conversationId: conversation._id }),
+    ConversationInsight.deleteMany({ tenantId: input.tenantId, conversationId: conversation._id }),
+    Conversation.deleteOne({ _id: conversation._id, tenantId: input.tenantId })
+  ]);
+
+  publishRealtimeEvent(input.tenantId, "conversation.deleted", {
+    conversationId: input.conversationId,
+    deletedBy: input.userId
+  }).catch(() => undefined);
+
+  return { success: true, deleted: true };
+}
+
 export async function markConversationRead(input: {
   tenantId: string;
   userId: string;

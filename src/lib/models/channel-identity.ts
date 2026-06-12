@@ -1,4 +1,4 @@
-import { Schema, models, model, type InferSchemaType, type Model } from "mongoose";
+import { Schema, models, model, type InferSchemaType, type Model, Types } from "mongoose";
 
 const channelIdentitySchema = new Schema(
   {
@@ -25,5 +25,5 @@ channelIdentitySchema.index({ tenantId: 1, channelId: 1, provider: 1, externalUs
 channelIdentitySchema.index({ tenantId: 1, provider: 1 });
 channelIdentitySchema.index({ tenantId: 1, lastSeenAt: -1 });
 
-export type ChannelIdentityDocument = InferSchemaType<typeof channelIdentitySchema>;
+export type ChannelIdentityDocument = InferSchemaType<typeof channelIdentitySchema> & { _id: Types.ObjectId };
 export const ChannelIdentity = (models.ChannelIdentity as Model<ChannelIdentityDocument>) || model("ChannelIdentity", channelIdentitySchema);

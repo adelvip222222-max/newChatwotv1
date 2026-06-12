@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
-import { UserPlus, Upload, FileSpreadsheet, Download, CheckCircle2, Loader2, ArrowLeft, Store, Stethoscope, Building2, TerminalSquare, Lightbulb, Globe, AlignLeft, Briefcase, Mic, X } from "lucide-react";
+import { UserPlus, Upload, FileSpreadsheet, Download, CheckCircle2, Loader2, ArrowLeft, Store, Stethoscope, Building2, TerminalSquare, Lightbulb, Globe, AlignLeft, Briefcase, Mic, X, MessageCircle, Users } from "lucide-react";
 import { useI18n } from "@/components/i18n-provider";
 
 type Industry = "ecommerce" | "medical" | "realestate" | "tech" | "other" | null;
@@ -18,7 +18,7 @@ const INDUSTRIES: { id: Industry; icon: React.ReactNode; template?: string }[] =
 
 export function RegisterForm() {
   const router = useRouter();
-  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [botId, setBotId] = useState("");
@@ -154,26 +154,111 @@ export function RegisterForm() {
       }
 
       setStep(3);
+      setLoading(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : t.auth.uploadError);
       setLoading(false);
     }
   }
 
-  function handleSkip() {
+  function handleSkipKnowledge() {
     setStep(3);
   }
 
-  function handleFinish() {
-    // Here we would typically verify the codes, for now we proceed
+  function handleActivationContinue() {
+    if (!phoneNumber.trim() || !emailCode.trim() || !phoneCode.trim()) {
+      setError(locale === "ar" ? "التفعيل مطلوب قبل المتابعة. أدخل رقم الهاتف وكود تفعيل البريد وكود تفعيل الهاتف." : "Activation is required before continuing. Enter phone number, email activation code, and phone activation code.");
+      return;
+    }
+    setError("");
+    setStep(4);
+  }
+
+  function finishOnboarding() {
     router.push("/dashboard");
     router.refresh();
   }
 
+  const renderProgress = () => {
+    const steps = [
+      locale === "ar" ? "التسجيل" : "Register",
+      locale === "ar" ? "القوالب" : "Templates",
+      locale === "ar" ? "التفعيل" : "Activation",
+      locale === "ar" ? "القنوات" : "Channels",
+      locale === "ar" ? "الموظفون" : "AI agents"
+    ];
+    return (
+      <div className="mb-5 flex gap-1 overflow-x-auto pb-1 no-scrollbar">
+        {steps.map((label, index) => {
+          const active = step === index + 1;
+          const done = step > index + 1;
+          return (
+            <span key={label} className={`shrink-0 rounded-full px-3 py-1 text-[11px] font-bold ${active ? "bg-primary-600 text-white" : done ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>
+              {index + 1}. {label}
+            </span>
+          );
+        })}
+      </div>
+    );
+  };
+
   const renderStep = () => {
+    if (step === 5) {
+      return (
+        <div className="panel w-full max-w-lg p-6 md:p-8">
+          {renderProgress()}
+          <div className="mb-6 text-center">
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-primary-100 text-primary-600 shadow-sm ring-4 ring-primary-50">
+              <Users size={24} />
+            </div>
+            <h1 className="text-2xl font-bold text-ink">{locale === "ar" ? "إضافة الموظفين الآليين" : "Add AI employees"}</h1>
+            <p className="mt-2 text-sm text-accent leading-relaxed">
+              {locale === "ar" ? "يمكنك إنشاء موظف مبيعات، دعم فني، حجز أو فواتير الآن، أو تخطي الخطوة والعودة لها لاحقًا." : "Create sales, support, booking, or billing AI employees now, or skip and return later."}
+            </p>
+          </div>
+          <div className="grid gap-3">
+            <a href="/dashboard/personas/new" className="btn-primary w-full justify-center">
+              <Users size={18} />
+              {locale === "ar" ? "إضافة موظف آلي" : "Add AI employee"}
+            </a>
+            <button type="button" onClick={finishOnboarding} className="btn-secondary w-full justify-center">
+              {locale === "ar" ? "تخطي وإنهاء" : "Skip and finish"}
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    if (step === 4) {
+      return (
+        <div className="panel w-full max-w-lg p-6 md:p-8">
+          {renderProgress()}
+          <div className="mb-6 text-center">
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-primary-100 text-primary-600 shadow-sm ring-4 ring-primary-50">
+              <MessageCircle size={24} />
+            </div>
+            <h1 className="text-2xl font-bold text-ink">{locale === "ar" ? "ربط القنوات" : "Connect channels"}</h1>
+            <p className="mt-2 text-sm text-accent leading-relaxed">
+              {locale === "ar" ? "اربط WhatsApp أو Messenger أو Instagram الآن، أو تخطَ هذه الخطوة مؤقتًا." : "Connect WhatsApp, Messenger, or Instagram now, or skip this step for now."}
+            </p>
+          </div>
+          <div className="grid gap-3">
+            <a href="/dashboard/channels" className="btn-primary w-full justify-center">
+              <MessageCircle size={18} />
+              {locale === "ar" ? "فتح صفحة القنوات" : "Open channels page"}
+            </a>
+            <button type="button" onClick={() => setStep(5)} className="btn-secondary w-full justify-center">
+              {locale === "ar" ? "تخطي القنوات" : "Skip channels"}
+            </button>
+          </div>
+        </div>
+      );
+    }
+
     if (step === 3) {
       return (
       <div className="panel w-full max-w-lg p-6 md:p-8">
+        {renderProgress()}
         <div className="mb-6 text-center">
           <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-primary-100 text-primary-600 shadow-sm ring-4 ring-primary-50">
             <CheckCircle2 size={24} />
@@ -221,23 +306,16 @@ export function RegisterForm() {
 
         <div className="mt-6 flex flex-col gap-3">
           <button 
-            onClick={handleFinish} 
+            onClick={handleActivationContinue} 
             className="btn-primary w-full"
           >
             <CheckCircle2 size={18} />
             {t.auth.finishButton}
           </button>
           
-          <button 
-            onClick={() => {
-              router.push("/dashboard");
-              router.refresh();
-            }}
-            className="flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition"
-          >
-            {t.auth.skipVerification}
-            <ArrowLeft size={16} className="rtl:rotate-0 rotate-180" />
-          </button>
+          <p className="rounded-lg bg-amber-50 p-3 text-center text-xs font-semibold text-amber-700">
+            {locale === "ar" ? "هذه الخطوة إجبارية قبل ربط القنوات. يمكن لاحقًا استبدالها بخدمة OTP فعلية." : "This step is required before connecting channels. It can later be wired to a real OTP provider."}
+          </p>
         </div>
       </div>
       );
@@ -248,6 +326,7 @@ export function RegisterForm() {
       
       return (
       <div className="panel w-full max-w-2xl p-6 md:p-8">
+        {renderProgress()}
         <div className="mb-6 text-center">
           <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-primary-100 text-primary-600 shadow-sm ring-4 ring-primary-50">
             <CheckCircle2 size={24} />
@@ -396,7 +475,7 @@ export function RegisterForm() {
           </button>
           
           <button 
-            onClick={handleSkip}
+            onClick={handleSkipKnowledge}
             disabled={loading}
             className="flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition"
           >
@@ -410,6 +489,7 @@ export function RegisterForm() {
 
     return (
       <form onSubmit={onRegisterSubmit} className="w-full">
+        {renderProgress()}
         <div className="flex justify-between items-center mb-8">
           <h1 className="text-3xl font-bold text-slate-800">{t.auth.registerTitle}</h1>
           <button

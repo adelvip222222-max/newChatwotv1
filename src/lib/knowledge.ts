@@ -16,6 +16,7 @@ import { connectToDatabase } from "@/lib/mongodb";
 import { decryptSecret } from "@/lib/crypto";
 import { knowledgeTrainingQueue, defaultJobOptions, makeQueueJobId } from "@/lib/queues";
 import { logger } from "@/lib/logger";
+import { routeAiRequest } from "@/lib/ai-router";
 
 export const knowledgeSourceTypes = [
   "pdf",
@@ -368,6 +369,103 @@ export async function getKnowledgeDocumentStatus(documentId: string, tenantId: s
     embeddingCount: document.embeddingCount || 0,
     needsRetraining: document.needsRetraining || false,
   };
+}
+
+export async function getKnowledgeDocumentForEdit(documentId: string, tenantId: string) {
+  await connectToDatabase();
+  if (!Types.ObjectId.isValid(documentId)) throw new Error("معرف مصدر المعرفة غير صالح.");
+  const document = await KnowledgeDocument.findOne({ _id: documentId, tenantId }).lean();
+  if (!document) throw new Error("مصدر المعرفة غير موجود.");
+  return {
+    id: document._id.toString(),
+    title: document.title,
+    sourceType: document.sourceType,
+    sourceUrl: document.sourceUrl || "",
+    tags: document.tags || [],
+    rawText: document.rawText || "",
+    status: document.status,
+    statusReason: document.statusReason || "",
+    needsRetraining: document.needsRetraining || false,
+    updatedAt: document.updatedAt ? new Date(document.updatedAt).toISOString() : ""
+  };
+}
+
+export async function updateKnowledgeDocument(input: {
+  documentId: string;
+  tenantId: string;
+  title?: string;
+  rawText?: string;
+  tags?: string[];
+  sourceUrl?: string;
+}) {
+  await connectToDatabase();
+  if (!Types.ObjectId.isValid(input.documentId)) throw new Error("معرف مصدر المعرفة غير صالح.");
+  const document = await KnowledgeDocument.findOne({ _id: input.documentId, tenantId: input.tenantId });
+  if (!document) throw new Error("مصدر المعرفة غير موجود.");
+
+  if (typeof input.title === "string" && input.title.trim()) document.title = input.title.trim();
+  if (typeof input.sourceUrl === "string") document.sourceUrl = input.sourceUrl.trim();
+  if (Array.isArray(input.tags)) document.tags = normalizeTags(input.tags);
+  if (typeof input.rawText === "string") {
+    const cleaned = cleanText(input.rawText);
+    if (cleaned.length < 10) throw new Error("المحتوى قصير جدًا أو لا يحتوي على نص قابل للقراءة.");
+    document.rawText = cleaned;
+    document.textHash = hash(cleaned);
+    document.sizeBytes = Buffer.byteLength(cleaned);
+    document.status = "pending";
+    document.statusReason = "تم تعديل المحتوى ويحتاج إعادة تدريب.";
+    document.needsRetraining = true;
+  }
+  await document.save();
+  return { success: true, id: document._id.toString(), needsRetraining: document.needsRetraining };
+}
+
+export async function deleteKnowledgeDocument(documentId: string, tenantId: string) {
+  await connectToDatabase();
+  if (!Types.ObjectId.isValid(documentId)) throw new Error("معرف مصدر المعرفة غير صالح.");
+  const document = await KnowledgeDocument.findOne({ _id: documentId, tenantId }).select("_id");
+  if (!document) throw new Error("مصدر المعرفة غير موجود.");
+  await Promise.all([
+    KnowledgeChunk.deleteMany({ tenantId, documentId: document._id }),
+    KnowledgeDocument.deleteOne({ _id: document._id, tenantId })
+  ]);
+  return { success: true, deleted: true };
+}
+
+export async function rewriteKnowledgeDocumentWithAi(documentId: string, tenantId: string) {
+  await connectToDatabase();
+  const document = await KnowledgeDocument.findOne({ _id: documentId, tenantId });
+  if (!document) throw new Error("مصدر المعرفة غير موجود.");
+  const currentText = String(document.rawText || "").trim();
+  if (currentText.length < 10) throw new Error("لا يوجد نص كافٍ لإعادة الصياغة.");
+
+  const result = await routeAiRequest({
+    temperature: 0.2,
+    systemPrompt: [
+      "You are a knowledge-base editor for an Arabic/English omnichannel CRM.",
+      "Rewrite the supplied content to be clearer, structured, searchable, and factual.",
+      "Do not add facts that are not present. Preserve product names, prices, policies, phone numbers, URLs, and dates exactly.",
+      "Return only the rewritten knowledge text, no markdown fence."
+    ].join("\n"),
+    userInput: currentText.slice(0, 24_000)
+  });
+
+  const rewritten = cleanText(result.reply || "");
+  if (rewritten.length < 10) throw new Error("لم يتمكن الذكاء الاصطناعي من إعادة صياغة النص.");
+  document.rawText = rewritten;
+  document.textHash = hash(rewritten);
+  document.sizeBytes = Buffer.byteLength(rewritten);
+  document.status = "pending";
+  document.statusReason = "تمت إعادة الصياغة بالذكاء الاصطناعي ويحتاج المصدر لإعادة التدريب.";
+  document.needsRetraining = true;
+  document.metadata = {
+    ...(document.metadata || {}),
+    rewrittenByAiAt: new Date().toISOString(),
+    rewrittenProvider: result.providerUsed,
+    rewrittenModel: result.modelUsed
+  };
+  await document.save();
+  return { success: true, id: document._id.toString(), rawText: rewritten };
 }
 
 export async function searchKnowledge(input: {
