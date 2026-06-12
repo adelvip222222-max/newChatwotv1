@@ -587,7 +587,7 @@ export function AIInboxClient({
       window.clearInterval(fallbackSync);
       window.removeEventListener("chatzi:realtime-event", handleRealtimeEvent);
     };
-  }, []);
+  }, [router]);
 
   useEffect(() => {
     const handleKeydown = (event: KeyboardEvent) => {
