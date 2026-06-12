@@ -207,7 +207,7 @@ const loadConversationStep = createStep({
       userMessageId: userMessage._id.toString(),
       action:
         conversation.status === "closed" || conversation.status === "human"
-          ? "skip"
+          ? ("skip" as const)
           : undefined,
       reason:
         conversation.status === "closed" || conversation.status === "human"
@@ -250,7 +250,7 @@ const moderationStep = createStep({
       return {
         ...inputData,
         moderation,
-        action: "fallback",
+        action: "fallback" as const,
         reply:
           inputData.setting?.fallbackMessage ||
           "عذراً، لا يمكنني معالجة هذا الطلب. يرجى التوضيح أو التواصل مع الدعم.",
@@ -273,7 +273,7 @@ const routeHandoffStep = createStep({
     if (hasExplicitHumanRequest(inputData.message)) {
       return {
         ...inputData,
-        action: "handoff",
+        action: "handoff" as const,
         reply: handoffReplyFor(inputData.message),
         confidence: null,
         reason: "explicit_human_request",
@@ -390,7 +390,7 @@ const generateReplyStep = createStep({
 
       return {
         ...inputData,
-        action: "reply",
+        action: "reply" as const,
         reply: result.text?.trim() || "",
         responseId: (result as { runId?: string }).runId || "",
         providerUsed: "mastra",
@@ -415,14 +415,15 @@ const persistResultStep = createStep({
     if (inputData.action === "skip") {
       return {
         generated: false,
-        action: "skip",
+        action: "skip" as const,
         conversationId: inputData.conversationId,
         confidence: null,
         reason: inputData.reason,
       };
     }
 
-    let action = inputData.action || "fallback";
+    let action: NonNullable<AiReplyRunContext["action"]> =
+      inputData.action || "fallback";
     let reply =
       inputData.reply ||
       inputData.setting?.fallbackMessage ||
