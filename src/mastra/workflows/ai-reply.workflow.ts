@@ -12,6 +12,7 @@ import { assertCanSendAiMessage, recordAiMessageUsage } from "@/lib/billing";
 import { buildKnowledgePrompt, searchKnowledge } from "@/lib/knowledge";
 import { checkContentModeration } from "@/lib/moderation";
 import { getMastraMaxToolCalls } from "@/lib/ai/orchestrator-flags";
+import { resolveMastraModelForBot } from "@/lib/ai/mastra-model-resolver";
 import { validateCustomerReply } from "@/lib/ai/reply-validators";
 import {
   describeAttachmentsForAi,
@@ -477,7 +478,6 @@ const generateReplyStep = createStep({
       .join("\n\n");
 
     const timeout = withTimeoutSignal();
-    const modelName = process.env.MASTRA_DEFAULT_MODEL || "openai/gpt-4o-mini";
     const attachmentDescription = describeAttachmentsForAi(
       getInputAttachments(inputData.metadata)
     );
@@ -486,8 +486,13 @@ const generateReplyStep = createStep({
       : inputData.message;
 
     try {
+      const resolvedModel = await resolveMastraModelForBot({
+        tenantId: inputData.tenantId,
+        botId: inputData.botId,
+      });
       const agent = mastra.getAgentById("customer-support-agent");
       const result = await agent.generate(userPrompt, {
+        model: resolvedModel.model,
         instructions,
         maxSteps: getMastraMaxToolCalls(),
         abortSignal: timeout.signal,
@@ -515,8 +520,8 @@ const generateReplyStep = createStep({
         action: "reply" as const,
         reply: result.text?.trim() || "",
         responseId: (result as { runId?: string }).runId || "",
-        providerUsed: "mastra",
-        modelUsed: modelName,
+        providerUsed: resolvedModel.providerUsed,
+        modelUsed: resolvedModel.modelUsed,
         modelCalled: true,
       };
     } finally {
