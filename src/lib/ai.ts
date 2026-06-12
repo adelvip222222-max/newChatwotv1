@@ -8,8 +8,10 @@ import { assertCanSendAiMessage, recordAiMessageUsage } from "@/lib/billing";
 import { buildKnowledgePrompt, searchKnowledge } from "@/lib/knowledge";
 import { decryptSecret } from "@/lib/crypto";
 import { checkContentModeration } from "@/lib/moderation";
+import { generateAiReplyWithMastra } from "@/lib/ai/mastra-orchestrator";
+import { isMastraAllowed, shouldFallbackToLegacy } from "@/lib/ai/orchestrator-flags";
 
-type GenerateReplyInput = {
+export type GenerateReplyInput = {
   tenantId: string;
   botId: string;
   message: string;
@@ -100,9 +102,31 @@ async function callOpenAiCompatible(options: {
   };
 }
 
-// ─── Main export ───────────────────────────────────────────────────────────────
+// ─── Orchestrator switch ───────────────────────────────────────────────────────
 
 export async function generateAiReply(input: GenerateReplyInput) {
+  if (isMastraAllowed(input.tenantId)) {
+    try {
+      return await generateAiReplyWithMastra(input);
+    } catch (error) {
+      console.error("mastra.orchestrator_failed", {
+        error,
+        tenantId: input.tenantId,
+        botId: input.botId,
+      });
+
+      if (!shouldFallbackToLegacy()) {
+        throw error;
+      }
+    }
+  }
+
+  return generateAiReplyLegacy(input);
+}
+
+// ─── Legacy implementation ────────────────────────────────────────────────────
+
+export async function generateAiReplyLegacy(input: GenerateReplyInput) {
   await connectToDatabase();
 
   if (!Types.ObjectId.isValid(input.tenantId) || !Types.ObjectId.isValid(input.botId)) {

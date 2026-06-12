@@ -6,11 +6,18 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "typecheck": "tsc --noEmit",
     "lint": "next lint"
   },
   "dependencies": {
+    "@ai-sdk/react": "^3.0.204",
     "@auth/mongodb-adapter": "^3.10.0",
     "@google/generative-ai": "^0.24.1",
+    "@mastra/ai-sdk": "^1.4.5",
+    "@mastra/core": "^1.42.0",
+    "@mastra/libsql": "^1.13.0",
+    "@mastra/memory": "^1.20.3",
+    "ai": "^6.0.202",
     "bcryptjs": "^3.0.2",
     "clsx": "^2.1.1",
     "exceljs": "^4.4.0",
