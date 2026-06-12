@@ -25,6 +25,13 @@ export type EnsureTicketInput = {
   metadata?: Record<string, unknown>;
 };
 
+export type TicketIntentClassification = {
+  shouldCreate: boolean;
+  category: TicketCategory;
+  priority: TicketPriority;
+  reason: string;
+};
+
 function buildSubject(input: {
   category: TicketCategory;
   triggerReason: string;
@@ -45,12 +52,7 @@ function buildSubject(input: {
   return `تذكرة دعم - ${input.externalUserId}`;
 }
 
-export function classifyTicketIntent(message: string): {
-  shouldCreate: boolean;
-  category: TicketCategory;
-  priority: TicketPriority;
-  reason: string;
-} {
+export function classifyTicketIntent(message: string): TicketIntentClassification {
   const normalized = message.toLowerCase();
 
   if (/(موظف|بشري|انسان|إنسان|خدمة\s*العملاء|الدعم\s*البشري|\bhuman\b|\bagent\b|representative)/i.test(message)) {

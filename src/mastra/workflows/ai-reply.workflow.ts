@@ -111,6 +111,7 @@ const aiReplyRunContextSchema = aiReplyInputSchema.extend({
 });
 
 type AiReplyRunContext = z.infer<typeof aiReplyRunContextSchema>;
+type AiReplyTicketContext = NonNullable<AiReplyRunContext["ticket"]>;
 
 function getTimeoutMs() {
   const value = Number(process.env.MASTRA_TIMEOUT_MS || 30000);
@@ -292,23 +293,32 @@ const routeHandoffStep = createStep({
     if (inputData.action) return inputData;
 
     if (hasExplicitHumanRequest(inputData.message)) {
+      const ticket: AiReplyTicketContext = {
+        shouldCreate: true,
+        category: "human_request",
+        priority: "medium",
+        reason: "explicit_human_request",
+      };
+
       return {
         ...inputData,
         action: "handoff" as const,
         reply: handoffReplyFor(inputData.message),
         confidence: null,
         reason: "explicit_human_request",
-        ticket: {
-          shouldCreate: true,
-          category: "human_request",
-          priority: "medium",
-          reason: "explicit_human_request",
-        },
+        ticket,
       };
     }
 
     const ticketIntent = classifyTicketIntent(inputData.message);
     if (ticketIntent.shouldCreate) {
+      const ticket: AiReplyTicketContext = {
+        shouldCreate: ticketIntent.shouldCreate,
+        category: ticketIntent.category as AiReplyTicketContext["category"],
+        priority: ticketIntent.priority as AiReplyTicketContext["priority"],
+        reason: ticketIntent.reason,
+      };
+
       return {
         ...inputData,
         action: "handoff" as const,
@@ -318,7 +328,7 @@ const routeHandoffStep = createStep({
             : handoffReplyFor(inputData.message),
         confidence: null,
         reason: ticketIntent.reason,
-        ticket: ticketIntent,
+        ticket,
       };
     }
 
@@ -374,6 +384,13 @@ const knowledgeStep = createStep({
       knowledge &&
       knowledge.confidence < (inputData.bot?.confidenceReviewThreshold ?? 40)
     ) {
+      const ticket: AiReplyTicketContext = {
+        shouldCreate: true,
+        category: "ai_failed",
+        priority: "medium",
+        reason: "low_knowledge_confidence",
+      };
+
       return {
         ...inputData,
         knowledge,
@@ -382,12 +399,7 @@ const knowledgeStep = createStep({
         action: "handoff" as const,
         reply: handoffReplyFor(inputData.message),
         reason: "low_knowledge_confidence",
-        ticket: {
-          shouldCreate: true,
-          category: "ai_failed",
-          priority: "medium",
-          reason: "low_knowledge_confidence",
-        },
+        ticket,
       };
     }
 
