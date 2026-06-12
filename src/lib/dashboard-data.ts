@@ -1,16 +1,17 @@
-import { Bot, Channel, Conversation, Message, Tenant, WebhookLog, AiSetting, AiModel } from "@/lib/models";
+import { Bot, Channel, Conversation, Message, Tenant, WebhookLog, AiSetting, AiModel, Ticket } from "@/lib/models";
 import { connectToDatabase } from "@/lib/mongodb";
 
 export async function getTenantSummary(tenantId: string) {
   await connectToDatabase();
-  const [bots, conversations, messages, activeChannels, tenant] = await Promise.all([
+  const [bots, conversations, messages, activeChannels, tickets, tenant] = await Promise.all([
     Bot.countDocuments({ tenantId }),
     Conversation.countDocuments({ tenantId }),
     Message.countDocuments({ tenantId }),
     Channel.countDocuments({ tenantId, isActive: true }),
+    Ticket.countDocuments({ tenantId, status: { $in: ["open", "pending"] } }),
     Tenant.findById(tenantId).lean()
   ]);
-  return { bots, conversations, messages, activeChannels, tenantName: tenant?.name || "ChatZi" };
+  return { bots, conversations, messages, activeChannels, tickets, tenantName: tenant?.name || "ChatZi" };
 }
 
 export async function getBots(tenantId: string) {
@@ -63,9 +64,12 @@ export async function getConversationDetail(tenantId: string, id: string) {
   await connectToDatabase();
   const conversation = await Conversation.findOne({ _id: id, tenantId }).lean();
   if (!conversation) return null;
-  const [bot, messages] = await Promise.all([
+  const [bot, messages, ticket] = await Promise.all([
     Bot.findById(conversation.botId).lean(),
-    Message.find({ conversationId: conversation._id, tenantId }).sort({ createdAt: 1 }).lean()
+    Message.find({ conversationId: conversation._id, tenantId }).sort({ createdAt: 1 }).lean(),
+    Ticket.findOne({ conversationId: conversation._id, tenantId, status: { $in: ["open", "pending"] } })
+      .sort({ createdAt: -1 })
+      .lean()
   ]);
   return {
     id: conversation._id.toString(),
@@ -73,6 +77,84 @@ export async function getConversationDetail(tenantId: string, id: string) {
     channel: conversation.channel,
     externalUserId: conversation.externalUserId,
     status: conversation.status,
+    ticket: ticket
+      ? {
+          id: ticket._id.toString(),
+          number: ticket.number,
+          subject: ticket.subject,
+          status: ticket.status,
+          priority: ticket.priority,
+          category: ticket.category
+        }
+      : null,
+    messages: messages.map((message) => ({
+      id: message._id.toString(),
+      sender: message.sender,
+      content: message.content,
+      createdAt: message.createdAt?.toISOString() || ""
+    }))
+  };
+}
+
+export async function getTickets(tenantId: string) {
+  await connectToDatabase();
+  const tickets = await Ticket.find({ tenantId }).sort({ updatedAt: -1 }).limit(100).lean();
+
+  return Promise.all(
+    tickets.map(async (ticket) => {
+      const [bot, conversation] = await Promise.all([
+        Bot.findById(ticket.botId).lean(),
+        Conversation.findById(ticket.conversationId).lean()
+      ]);
+
+      return {
+        id: ticket._id.toString(),
+        number: ticket.number,
+        subject: ticket.subject,
+        status: ticket.status,
+        priority: ticket.priority,
+        category: ticket.category,
+        channel: ticket.channel,
+        requesterExternalId: ticket.requesterExternalId,
+        botName: bot?.name || "-",
+        conversationId: ticket.conversationId.toString(),
+        conversationStatus: conversation?.status || "-",
+        triggerReason: ticket.triggerReason || "",
+        createdAt: ticket.createdAt?.toISOString() || "",
+        updatedAt: ticket.updatedAt?.toISOString() || ""
+      };
+    })
+  );
+}
+
+export async function getTicketDetail(tenantId: string, id: string) {
+  await connectToDatabase();
+  const ticket = await Ticket.findOne({ _id: id, tenantId }).lean();
+  if (!ticket) return null;
+
+  const [bot, conversation, messages] = await Promise.all([
+    Bot.findById(ticket.botId).lean(),
+    Conversation.findOne({ _id: ticket.conversationId, tenantId }).lean(),
+    Message.find({ conversationId: ticket.conversationId, tenantId }).sort({ createdAt: 1 }).lean()
+  ]);
+
+  return {
+    id: ticket._id.toString(),
+    number: ticket.number,
+    subject: ticket.subject,
+    description: ticket.description || "",
+    status: ticket.status,
+    priority: ticket.priority,
+    category: ticket.category,
+    requesterExternalId: ticket.requesterExternalId,
+    channel: ticket.channel,
+    botName: bot?.name || "-",
+    conversationId: ticket.conversationId.toString(),
+    conversationStatus: conversation?.status || "-",
+    triggerReason: ticket.triggerReason || "",
+    aiSummary: ticket.aiSummary || "",
+    createdAt: ticket.createdAt?.toISOString() || "",
+    updatedAt: ticket.updatedAt?.toISOString() || "",
     messages: messages.map((message) => ({
       id: message._id.toString(),
       sender: message.sender,

@@ -1,4 +1,4 @@
-import { Bot, MessageSquare, PlugZap, Send } from "lucide-react";
+import { Bot, MessageSquare, PlugZap, Send, TicketCheck } from "lucide-react";
 import { requireSession } from "@/lib/auth";
 import { getTenantSummary } from "@/lib/dashboard-data";
 import { PageHeader } from "@/components/dashboard/page-header";
@@ -15,6 +15,7 @@ export default async function DashboardPage() {
     { label: isAr ? "عدد البوتات" : "Number of Bots", value: summary.bots, icon: Bot },
     { label: isAr ? "عدد المحادثات" : "Number of Conversations", value: summary.conversations, icon: MessageSquare },
     { label: isAr ? "عدد الرسائل" : "Number of Messages", value: summary.messages, icon: Send },
+    { label: isAr ? "التذاكر المفتوحة" : "Open Tickets", value: summary.tickets, icon: TicketCheck },
     { label: isAr ? "القنوات المفعلة" : "Active Channels", value: summary.activeChannels, icon: PlugZap }
   ];
 
@@ -24,7 +25,7 @@ export default async function DashboardPage() {
         title={isAr ? `مرحباً بك في ${summary.tenantName}` : `Welcome to ${summary.tenantName}`} 
         description={isAr ? "نظرة سريعة على نشاط منصة ChatZi." : "A quick look at your ChatZi workspace activity."} 
       />
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         {stats.map((stat) => {
           const Icon = stat.icon;
           return (

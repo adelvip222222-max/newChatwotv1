@@ -13,15 +13,15 @@ function parseAllowlist(value: string | undefined) {
 }
 
 export function isMastraAllowed(tenantId: string) {
-  if (process.env.AI_ORCHESTRATOR !== "mastra") return false;
-  if (!parseBoolean(process.env.MASTRA_ENABLED, false)) return false;
+  if (process.env.AI_ORCHESTRATOR === "legacy") return false;
+  if (!parseBoolean(process.env.MASTRA_ENABLED, true)) return false;
 
   const allowlist = parseAllowlist(process.env.MASTRA_TENANT_ALLOWLIST);
-  return allowlist.has("*") || allowlist.has(tenantId);
+  return allowlist.size === 0 || allowlist.has("*") || allowlist.has(tenantId);
 }
 
 export function shouldFallbackToLegacy() {
-  return parseBoolean(process.env.MASTRA_FALLBACK_TO_LEGACY, true);
+  return parseBoolean(process.env.MASTRA_FALLBACK_TO_LEGACY, false);
 }
 
 export function getMastraMaxToolCalls() {

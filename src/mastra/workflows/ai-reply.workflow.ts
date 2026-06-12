@@ -13,6 +13,12 @@ import { buildKnowledgePrompt, searchKnowledge } from "@/lib/knowledge";
 import { checkContentModeration } from "@/lib/moderation";
 import { getMastraMaxToolCalls } from "@/lib/ai/orchestrator-flags";
 import { validateCustomerReply } from "@/lib/ai/reply-validators";
+import {
+  classifyTicketIntent,
+  ensureTicketForConversation,
+  type TicketCategory,
+  type TicketPriority,
+} from "@/lib/tickets";
 
 const settingSchema = z
   .object({
@@ -86,6 +92,21 @@ const aiReplyRunContextSchema = aiReplyInputSchema.extend({
       reason: z.string().optional(),
     })
     .optional(),
+  ticket: z
+    .object({
+      shouldCreate: z.boolean(),
+      category: z.enum([
+        "technical_support",
+        "complaint",
+        "human_request",
+        "ai_failed",
+        "general",
+      ]),
+      priority: z.enum(["low", "medium", "high", "urgent"]),
+      reason: z.string(),
+    })
+    .optional(),
+  ticketId: z.string().optional(),
   modelCalled: z.boolean().optional(),
 });
 
@@ -277,6 +298,27 @@ const routeHandoffStep = createStep({
         reply: handoffReplyFor(inputData.message),
         confidence: null,
         reason: "explicit_human_request",
+        ticket: {
+          shouldCreate: true,
+          category: "human_request",
+          priority: "medium",
+          reason: "explicit_human_request",
+        },
+      };
+    }
+
+    const ticketIntent = classifyTicketIntent(inputData.message);
+    if (ticketIntent.shouldCreate) {
+      return {
+        ...inputData,
+        action: "handoff" as const,
+        reply:
+          ticketIntent.category === "complaint"
+            ? "تم تسجيل شكواك وتحويلها لفريق الدعم لمتابعتها في أقرب وقت."
+            : handoffReplyFor(inputData.message),
+        confidence: null,
+        reason: ticketIntent.reason,
+        ticket: ticketIntent,
       };
     }
 
@@ -327,6 +369,27 @@ const knowledgeStep = createStep({
           showSources: false,
         })
       : "";
+
+    if (
+      knowledge &&
+      knowledge.confidence < (inputData.bot?.confidenceReviewThreshold ?? 40)
+    ) {
+      return {
+        ...inputData,
+        knowledge,
+        knowledgePrompt,
+        confidence: knowledge.confidence,
+        action: "handoff" as const,
+        reply: handoffReplyFor(inputData.message),
+        reason: "low_knowledge_confidence",
+        ticket: {
+          shouldCreate: true,
+          category: "ai_failed",
+          priority: "medium",
+          reason: "low_knowledge_confidence",
+        },
+      };
+    }
 
     return {
       ...inputData,
@@ -437,6 +500,41 @@ const persistResultStep = createStep({
         "أحتاج إلى معلومة إضافية حتى أجيب بدقة. ما المنتج أو الخدمة التي تقصدها؟";
     }
 
+    let ticketId: string | undefined;
+    const shouldCreateTicket =
+      inputData.ticket?.shouldCreate ||
+      action === "handoff" ||
+      (!validation.valid && inputData.modelCalled);
+
+    if (shouldCreateTicket) {
+      const ticket = await ensureTicketForConversation({
+        tenantId: inputData.tenantId,
+        botId: inputData.botId,
+        conversationId: inputData.conversationId,
+        triggerReason:
+          inputData.ticket?.reason ||
+          inputData.reason ||
+          validation.reason ||
+          "ai_followup_required",
+        category: (inputData.ticket?.category ||
+          (!validation.valid ? "ai_failed" : "human_request")) as TicketCategory,
+        priority: (inputData.ticket?.priority || "medium") as TicketPriority,
+        aiSummary: [
+          `Reason: ${inputData.ticket?.reason || inputData.reason || validation.reason || "-"}`,
+          `Channel: ${inputData.channel}`,
+          `Knowledge confidence: ${inputData.confidence ?? "-"}`,
+          `Last customer message: ${inputData.message}`,
+        ].join("\n"),
+        metadata: {
+          workflow: "ai-reply-workflow",
+          action,
+          validation,
+          knowledgeConfidence: inputData.confidence,
+        },
+      });
+      ticketId = ticket?._id?.toString();
+    }
+
     if (action === "handoff") {
       await Conversation.updateOne(
         { _id: inputData.conversationId, tenantId: inputData.tenantId, botId: inputData.botId },
@@ -457,6 +555,7 @@ const persistResultStep = createStep({
         orchestrator: "mastra",
         action,
         reason: inputData.reason,
+        ticketId,
         validation: validation.valid ? { valid: true } : validation,
         knowledge: inputData.knowledge
           ? {

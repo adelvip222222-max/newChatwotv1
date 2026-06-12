@@ -13,5 +13,6 @@ export * from "./message";
 export * from "./payment-event";
 export * from "./tenant";
 export * from "./tenant-subscription";
+export * from "./ticket";
 export * from "./user";
 export * from "./webhook-log";

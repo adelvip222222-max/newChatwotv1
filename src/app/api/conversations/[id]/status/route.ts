@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth";
 import { connectToDatabase } from "@/lib/mongodb";
 import { Conversation } from "@/lib/models";
+import { ensureTicketForConversation } from "@/lib/tickets";
 
 export async function PATCH(
   request: NextRequest,
@@ -27,6 +28,19 @@ export async function PATCH(
 
     if (!conversation) {
       return NextResponse.json({ error: "Conversation not found" }, { status: 404 });
+    }
+
+    if (status === "human") {
+      await ensureTicketForConversation({
+        tenantId: session.user.tenantId,
+        botId: conversation.botId.toString(),
+        conversationId: conversation._id.toString(),
+        triggerReason: "manual_human_handoff",
+        category: "human_request",
+        priority: "medium",
+        source: "agent",
+        metadata: { createdFrom: "conversation_status_change" },
+      });
     }
 
     return NextResponse.json({ success: true, status: conversation.status });

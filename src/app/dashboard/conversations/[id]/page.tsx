@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import Link from "next/link";
 import { requireSession } from "@/lib/auth";
 import { getConversationDetail } from "@/lib/dashboard-data";
 import { PageHeader } from "@/components/dashboard/page-header";
@@ -15,6 +16,13 @@ export default async function ConversationPage({ params }: { params: Promise<{ i
       <PageHeader
         title={`محادثة ${conversation.externalUserId}`}
         description={`${conversation.botName} · ${conversation.channel}`}
+        action={
+          conversation.ticket ? (
+            <Link className="btn-secondary" href={`/dashboard/tickets/${conversation.ticket.id}`}>
+              تذكرة #{conversation.ticket.number}
+            </Link>
+          ) : null
+        }
       />
       <section className="max-w-4xl pt-4">
         <ConversationViewer
